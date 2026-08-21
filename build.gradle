@@ -1,0 +1,148 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.144'
+    id 'me.modmuss50.mod-publish-plugin' version '2.2.0'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    // The Minecraft version belongs in the file name: a player with three of these in a
+    // downloads folder has nothing else to tell them apart.
+    archivesName = "${mod_id}-${minecraft_version}"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+
+repositories {
+    mavenLocal()
+    maven {
+        name = 'NeoForged'
+        url = 'https://maven.neoforged.net/releases'
+    }
+    mavenCentral()
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        minecraftVersion = project.parchment_minecraft_version
+        mappingsVersion = project.parchment_mappings_version
+    }
+
+    runs {
+        configureEach {
+            gameDirectory = project.file('run')
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+        client {
+            client()
+        }
+        server {
+            server()
+            programArgument '--nogui'
+        }
+        data {
+            data()
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('run-gametest')
+        }
+    }
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_range      : neo_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/neoforge.mods.toml']) {
+        expand replaceProperties
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('jar', Jar).configure {
+    from(file('LICENSE')) { into 'META-INF' }
+}
+
+// Release notes come from CHANGELOG.md so that a release is described in one place instead of
+// being retyped into two web forms. It looks up the section for the version actually being
+// published rather than whatever is at the top: forgetting to write an entry should stop the
+// release, not ship the previous version's notes under a new number.
+def latestChangelog() {
+    def source = file('CHANGELOG.md')
+    def lines = source.exists() ? source.readLines() : []
+    def start = lines.findIndexOf { it.startsWith('## ') && it.contains(mod_version) }
+    if (start < 0) {
+        throw new GradleException(
+                "CHANGELOG.md has no '## ' section naming ${mod_version} -- write one before publishing.")
+    }
+    def rest = lines.drop(start + 1)
+    def next = rest.findIndexOf { it.startsWith('## ') }
+    return (next < 0 ? rest : rest.take(next)).join('\n').trim()
+}
+
+// Uploads the jar to CurseForge and GitHub Releases in one go.
+publishMods {
+    file = tasks.named('jar', Jar).flatMap { it.archiveFile }
+    // Lazily, so a missing changelog section fails the release rather than an ordinary build.
+    changelog = providers.provider { latestChangelog() }
+    // Not BETA: both sites let players filter to stable versions only, and a first release
+    // labelled Beta is invisible to them.
+    type = STABLE
+    modLoaders.add('neoforge')
+    // Without this the version is listed as "shuffler-box 0.1.0", after the Gradle project name,
+    // which is not what the mod is called anywhere a player can see.
+    displayName = "${mod_name} ${mod_version}"
+
+    // `./gradlew publishMods -PdryRun=true` rehearses the whole thing -- resolving the jar,
+    // pulling the changelog section, checking every destination is configured -- and writes what
+    // it would have uploaded to build/ instead of uploading it.
+    dryRun = providers.gradleProperty('dryRun').map { it.toBoolean() }.orElse(false)
+
+    curseforge {
+        projectId = curseforge_project_id
+        projectSlug = 'shuffler-box'
+        accessToken = providers.environmentVariable('CURSEFORGE_TOKEN')
+        minecraftVersions.add(minecraft_version)
+        // Both sides: the server draws the block and spends the box, the client renders it and
+        // has to decline the click itself so the game does not fall through to placing the box.
+        clientRequired = true
+        serverRequired = true
+    }
+    // No `modrinth` block, deliberately -- see the Distribution notes in CLAUDE.md. Don't add one
+    // back by only pasting the block: an empty MODRINTH_TOKEN fails at upload rather than at
+    // configuration time, which half-publishes a release after CurseForge has taken the jar.
+    github {
+        repository = github_repository
+        accessToken = providers.environmentVariable('GITHUB_TOKEN')
+        commitish = providers.environmentVariable('GITHUB_SHA').orElse('dev')
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " B ",
+    "SCS",
+    " I "
+  ],
+  "key": {
+    "B": { "item": "minecraft:bone_block" },
+    "S": { "item": "minecraft:shulker_shell" },
+    "C": { "item": "minecraft:chest" },
+    "I": { "item": "minecraft:ink_sac" }
+  },
+  "result": {
+    "id": "shufflerbox:shuffler_box",
+    "count": 1
+  }
+}

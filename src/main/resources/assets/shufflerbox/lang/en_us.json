@@ -1,0 +1,9 @@
+{
+  "block.shufflerbox.shuffler_box": "Shuffler Box",
+  "container.shufflerbox.shuffler_box": "Shuffler Box",
+  "tooltip.shufflerbox.empty": "Empty",
+  "tooltip.shufflerbox.entry": "%2$s%% %1$s",
+  "tooltip.shufflerbox.more": "…and %s more",
+  "tooltip.shufflerbox.stranded": "%s slots hold something it cannot place",
+  "tooltip.shufflerbox.hint": "Hold in your off hand while you build"
+}

@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "particle": "shufflerbox:block/shuffler_box_north",
+    "down": "shufflerbox:block/shuffler_box_bottom",
+    "up": "shufflerbox:block/shuffler_box_top",
+    "north": "shufflerbox:block/shuffler_box_north",
+    "south": "shufflerbox:block/shuffler_box_south",
+    "west": "shufflerbox:block/shuffler_box_west",
+    "east": "shufflerbox:block/shuffler_box_east"
+  }
+}
