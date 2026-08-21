@@ -44,7 +44,11 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   section and trips that guard without uploading anything.
 - **`projectSlug` only builds the download link**, not the upload, which is keyed on the project
   id. A wrong slug is a dead link in the release announcement rather than a failed publish, so it
-  is worth an eye rather than a guard.
+  is worth an eye rather than a guard. It is confirmed as `shuffler-box`.
+- **A project pending CurseForge approval still accepts uploads.** Its public page 404s until a
+  moderator clears it, which looks like the project not existing; it does not stop `publishMods`.
+  Confirmed on Create: Workers on 2026-08-21, so a first release does not have to wait for
+  approval.
 
 - **CurseForge and GitHub only; Modrinth is deliberately not a destination.** Modrinth's Content
   Rules gained a section 6 on generative AI in August 2026. Its disclosure requirement is no
