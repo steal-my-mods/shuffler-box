@@ -37,9 +37,12 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   a lazy provider so an ordinary `./gradlew build` never trips over it.
 - **`archivesName` carries the Minecraft version** (`shufflerbox-1.21.1-0.1.0.jar`). If you change
   it, remember the sites will not let you rename a file after upload.
-- **`curseforge_project_id` is blank** until the project exists; `publishMods` is the only thing
-  that reads it. Rehearse a release with `./gradlew publishMods -PdryRun=true`, which resolves the
-  jar, pulls the changelog section and checks every destination without uploading.
+- **`curseforge_project_id` is blank** until the project exists, and `publishCurseforge` refuses
+  to run while it is. The plugin itself does not mind a blank id: it stages the upload and only
+  fails when the API rejects it, by which point `publishGithub` may already have created the
+  release, since the two run in no guaranteed order. Rehearse with
+  `./gradlew publishMods -PdryRun=true`, which resolves the jar, pulls the changelog section and
+  trips that guard without uploading anything.
 
 - **CurseForge and GitHub only; Modrinth is deliberately not a destination.** Modrinth's Content
   Rules gained a section 6 on generative AI in August 2026. Its disclosure requirement is no

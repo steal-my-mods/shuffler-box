@@ -146,3 +146,18 @@ publishMods {
         commitish = providers.environmentVariable('GITHUB_SHA').orElse('dev')
     }
 }
+
+// The plugin does not mind a blank projectId: it stages the upload and only fails when the API
+// rejects it, by which point publishGithub may already have created the release. Since the two
+// run in no guaranteed order, that is a release published on one site and not the other, on the
+// site that will not let a file be replaced. Fail before anything leaves the machine instead --
+// the same reason the changelog is checked up front. This fires on dry runs too, which is the
+// point of rehearsing.
+tasks.named('publishCurseforge').configure {
+    doFirst {
+        if (!curseforge_project_id?.trim()) {
+            throw new GradleException('curseforge_project_id is blank in gradle.properties. '
+                    + 'Copy it off the CurseForge project page before publishing.')
+        }
+    }
+}

@@ -25,7 +25,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       # A tag that disagrees with mod_version would publish the jar under the wrong number on
-      # every site at once, and none of them lets you rename a file after upload.
+      # both sites at once, and neither lets you rename a file after upload.
       - name: Check the tag matches mod_version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
