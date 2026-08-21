@@ -2,10 +2,6 @@
   "replace": false,
   "values": [
     {
-      "id": "copycats:copycat_base",
-      "required": false
-    },
-    {
       "id": "copycats:copycat_beam",
       "required": false
     },
@@ -187,10 +183,6 @@
     },
     {
       "id": "create:copycat_bars",
-      "required": false
-    },
-    {
-      "id": "create:copycat_base",
       "required": false
     },
     {

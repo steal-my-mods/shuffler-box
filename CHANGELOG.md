@@ -44,7 +44,8 @@ First release.
   box in your off hand, and every wall you place is filled with a material drawn from the box.
   Shape from your hand, paint from the box, a different material block to block. Your hand pays for
   the copycat, the box pays for the material, and the box only offers materials a copycat can
-  actually wear.
+  actually wear. A blank copycat already standing in the world is painted from the box too: click
+  it and it takes a drawn material, while one that already wears something is left alone.
 
 ### Known limitations
 

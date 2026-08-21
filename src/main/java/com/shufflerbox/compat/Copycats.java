@@ -14,6 +14,7 @@ import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Copycat blocks, as seen from outside Create.
@@ -49,7 +50,18 @@ public final class Copycats {
     /** Whether placing {@code held} would fill it from the off hand. */
     public static boolean fillsFromOffHand(ItemStack held) {
         return held.getItem() instanceof BlockItem blockItem
-                && blockItem.getBlock().defaultBlockState().is(FILLS_FROM_OFF_HAND);
+                && fillsFromOffHand(blockItem.getBlock().defaultBlockState());
+    }
+
+    /**
+     * Whether a block already standing in the world takes its material out of the off hand.
+     *
+     * <p>The same question as the one above, asked of a copycat that has already been placed:
+     * Create will paint a blank one from whatever hand clicked it, and that hand is where the box
+     * lives, so the box has a material to lend on those clicks too.
+     */
+    public static boolean fillsFromOffHand(BlockState clicked) {
+        return clicked.is(FILLS_FROM_OFF_HAND);
     }
 
     /**
@@ -59,6 +71,14 @@ public final class Copycats {
      * first, then no block entities, no stairs, and a full cube that something can stand on.
      * Mirrored rather than called, because calling it would mean compiling against Create and
      * every install would then need it.
+     *
+     * <p>{@code pos} is indicative rather than exact: for a copycat being placed it is the block
+     * that was clicked, while Create asks about the cell the copycat will occupy, and for the
+     * arrow-placement path the copycat's cell is not knowable from here at all. Every vanilla
+     * block derives both shapes from its state alone, so the two agree; a modded candidate that
+     * reads the level could be judged against the neighbouring cell. Deliberately not "fixed" into
+     * a precision this side cannot have -- and it costs nothing, because the box is only ever
+     * charged for a material Create actually took.
      *
      * <p>The mirror is deliberately the conservative half of that test. An individual copycat can
      * widen what it accepts (`isAcceptedRegardless`, false in Create's base class), so Create may
@@ -83,7 +103,15 @@ public final class Copycats {
 
         // A Shuffler Box is turned away here too, by being an EntityBlock above: a copycat made
         // of shuffler boxes would be a box eaten out of the hand that was filling it.
-        return state.getShape(level, pos).bounds().equals(Shapes.block().bounds())
+        //
+        // Asked whether it is empty before anything else is asked of it, because an empty shape
+        // has no bounds to compare: VoxelShape#bounds throws on one. Create's own test opens with
+        // the same guard. Without it, a block with no outline at all -- a light block, and
+        // whatever a mod makes of one -- takes the exception out through the click that drew it,
+        // which is a crash rather than a material the box turns down.
+        VoxelShape outline = state.getShape(level, pos);
+        return !outline.isEmpty()
+                && outline.bounds().equals(Shapes.block().bounds())
                 && !state.getCollisionShape(level, pos).isEmpty();
     }
 

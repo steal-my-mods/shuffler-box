@@ -35,6 +35,12 @@ SOURCES = [
 
 BLOCKSTATE = re.compile(r'^assets/(?P<namespace>[a-z0-9_.-]+)/blockstates/(?P<block>[a-z0-9_]+)\.json$')
 
+# Blocks whose name says copycat and which are not one. `copycat_base` is what Create stands in
+# for "no material at all" -- it is what a materialless copycat reports being made of, not a block
+# that takes anything out of a hand. Listing it would have the box lend a material to something
+# that never asks for one.
+NOT_COPYCATS = {'create:copycat_base', 'copycats:copycat_base'}
+
 
 def copycats_in(jar_path, namespace):
     """Every block id in one jar whose name says it is a copycat."""
@@ -45,7 +51,7 @@ def copycats_in(jar_path, namespace):
             if not match or match.group('namespace') != namespace:
                 continue
             block = match.group('block')
-            if 'copycat' in block:
+            if 'copycat' in block and f'{namespace}:{block}' not in NOT_COPYCATS:
                 found.add(f'{namespace}:{block}')
     return found
 

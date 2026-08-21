@@ -37,6 +37,11 @@ you keep building, a fresh random block every time.
 
 To **place the box itself**, hold it in your *main* hand.
 
+Any click your main hand has no use for falls through to the box, so holding a pickaxe or a sword
+and right-clicking places a drawn block too -- the same way a torch in your off hand would. Only a
+main hand with something to place of its own, or something that answers the click itself, keeps the
+box out of it.
+
 ## Two things worth knowing
 
 **The box feeds your hand; it never takes over your placement.** Every block is placed out of your
@@ -83,6 +88,12 @@ and each block you place can come out a different material. Your hand pays for t
 box pays for the material. Copycats you place by the arrow -- the one that appears when you point
 at a copycat you have already placed and offers to put the next one alongside it -- are painted
 from the box too.
+
+A copycat already standing in the world with nothing on it is painted from the box as well: point
+at it and right-click, with an empty main hand or with whatever you happen to be holding, and it
+takes a material drawn from the box. Copycats that already wear something are left alone -- Create
+itself declines to repaint them -- so clicking one you have finished still places a block against
+its face, and building alongside a copycat wall works the way it always did.
 
 The box only offers materials a copycat can actually wear -- full blocks, nothing with a block
 entity, no stairs, plus whatever `create:copycat_allow` and `create:copycat_deny` have to say --

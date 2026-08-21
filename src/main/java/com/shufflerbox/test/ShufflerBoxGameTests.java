@@ -504,7 +504,11 @@ public class ShufflerBoxGameTests {
                 UseItemOnBlockEvent.UsePhase.ITEM_BEFORE_BLOCK);
         NeoForge.EVENT_BUS.post(lend);
 
-        helper.assertTrue(!lend.isCanceled(), "lending a material should not take the click over");
+        // Lending is the whole of the first phase: the copycat is still to be placed, by the
+        // game's own path, below. A box that took this click over instead would have put its own
+        // block here -- which is what asserting on the event not being cancelled looks like it
+        // covers and does not, since nothing in the lend can cancel anything.
+        helper.assertBlockPresent(Blocks.AIR, FLOOR.above());
         helper.assertTrue(player.getOffhandItem().is(Items.COBBLESTONE),
                 "the off hand should be holding one cobblestone out of the box by now, not "
                         + player.getOffhandItem().getHoverName().getString());
@@ -528,6 +532,82 @@ public class ShufflerBoxGameTests {
                             + player.getOffhandItem().getHoverName().getString());
             helper.assertTrue(countIn(box, Items.COBBLESTONE) == 63,
                     "the box should have paid for the material, but holds " + countIn(box, Items.COBBLESTONE));
+            helper.succeed();
+        });
+    }
+
+    /**
+     * A copycat can already be standing in the world with nothing on it -- put down out of a
+     * creative inventory, or placed on a click the box had no material for. Clicking one of those
+     * is how Create expects a copycat to be painted, and the paint comes out of the hand that
+     * clicked it, which is the hand holding the box.
+     *
+     * <p>This used to be the one gesture where the two mods looked incompatible. The box was only
+     * watching for a copycat <i>held</i>, so a click that landed on a blank one lent nothing;
+     * Create was handed the box itself, turned it down for being a block entity, and the click
+     * fell through to the box's own turn, which placed a drawn block against the copycat's face.
+     * The copycat you were trying to fill stayed blank and a block you did not ask for appeared
+     * next to it.
+     *
+     * <p>Skipped when Copycats+ is not installed; {@code tools/fetch_dev_mods.py} installs it.
+     */
+    @GameTest(template = "platform")
+    public static void aBlankCopycatAlreadyPlacedIsPaintedFromTheBox(GameTestHelper helper) {
+        Block wall = BuiltInRegistries.BLOCK.getOptional(COPYCAT_WALL).orElse(null);
+        if (wall == null) {
+            helper.succeed();
+            return;
+        }
+
+        helper.setBlock(FLOOR, Blocks.STONE);
+        // Blank, because a copycat that has never been given a material is what one placed out of
+        // a creative inventory is, and it is the case this test exists for.
+        helper.setBlock(FLOOR.above(), wall);
+        String before = material(helper, FLOOR.above());
+        helper.assertTrue(before.isEmpty() || PLAIN.equals(before),
+                "the copycat has to start out wearing nothing or this test proves nothing; it is " + before);
+
+        ItemStack box = boxOf(new ItemStack(Items.COBBLESTONE, 64));
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        // An empty main hand takes no turn of its own, so the click falls through to the off hand,
+        // and the first phase of that turn is the one that has to leave a material behind.
+        UseItemOnBlockEvent lend = clickTopOf(helper, player, FLOOR.above(), InteractionHand.OFF_HAND,
+                UseItemOnBlockEvent.UsePhase.ITEM_BEFORE_BLOCK);
+        NeoForge.EVENT_BUS.post(lend);
+
+        helper.assertTrue(player.getOffhandItem().is(Items.COBBLESTONE),
+                "the off hand should be holding one cobblestone out of the box by now, not "
+                        + player.getOffhandItem().getHoverName().getString());
+
+        // The clicked block's own turn, which is where Create paints it. Driven with the hand
+        // rather than with the stack the click started out holding, because that is what the game
+        // does -- and it is the only reason lending a material is enough to reach this path.
+        UseOnContext context = lend.getUseOnContext();
+        BlockHitResult hit = new BlockHitResult(context.getClickLocation(), context.getClickedFace(),
+                context.getClickedPos(), context.isInside());
+        helper.getLevel().getBlockState(context.getClickedPos()).useItemOn(
+                player.getItemInHand(InteractionHand.OFF_HAND), helper.getLevel(), player,
+                InteractionHand.OFF_HAND, hit);
+
+        String painted = material(helper, FLOOR.above());
+        helper.assertTrue("minecraft:cobblestone".equals(painted),
+                "the copycat standing there should have been painted with the cobblestone the box lent it,"
+                        + " but is " + (PLAIN.equals(painted) || painted.isEmpty() ? "still blank" : painted));
+
+        // Create took the whole lent stack, which is how the box knows to charge itself for it.
+        helper.assertTrue(player.getOffhandItem().isEmpty(),
+                "Create should have taken the lent cobblestone, leaving the hand empty for the box to"
+                        + " come back to, but it holds " + player.getOffhandItem().getHoverName().getString());
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getOffhandItem().is(SBItems.SHUFFLER_BOX.get()),
+                    "the box has to be back in the off hand once the click is over, not "
+                            + player.getOffhandItem().getHoverName().getString());
+            helper.assertTrue(countIn(box, Items.COBBLESTONE) == 63,
+                    "the box should have paid for the paint, but holds " + countIn(box, Items.COBBLESTONE));
             helper.succeed();
         });
     }
@@ -653,11 +733,13 @@ public class ShufflerBoxGameTests {
                 UseItemOnBlockEvent.UsePhase.ITEM_BEFORE_BLOCK);
         NeoForge.EVENT_BUS.post(lend);
 
-        helper.assertTrue(!lend.isCanceled(),
-                "a box of slabs has no material a copycat could wear and should have stood aside");
+        // Standing aside is the box still being in the hand it would have lent out of. (There
+        // was an assertion on the event not being cancelled here, which reads like it covers the
+        // same thing and cannot fail: the lend has no cancel in it to begin with.)
         helper.assertTrue(player.getOffhandItem().is(SBItems.SHUFFLER_BOX.get()),
                 "nothing should have been lent, so the box should still be in the off hand, not "
                         + player.getOffhandItem().getHoverName().getString());
+        helper.assertBlockPresent(Blocks.AIR, FLOOR.above());
 
         UseOnContext context = lend.getUseOnContext();
         context.getItemInHand().useOn(context);

@@ -14,9 +14,12 @@ import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.UseItemOnBlockEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -127,6 +130,24 @@ public final class ShuffleHandler {
             return;
         }
 
+        // A copycat can also be standing there already, blank -- put down out of a creative
+        // inventory, or placed on a click the box had no material for. Create paints one of those
+        // from whatever hand clicked it, and reads that hand fresh when it does (NeoForge's own
+        // patch: `blockstate.useItemOn(player.getItemInHand(hand), ...)`), so lending in the first
+        // phase is the whole of it here too: Create's own paint then consumes the click and the
+        // box never reaches its turn below.
+        //
+        // Safe to offer on every such click, because Create refuses to repaint a copycat that
+        // already wears something (`hasCustomMaterial`, which returns the click unconsumed). So a
+        // painted copycat still gets the box's ordinary turn and a block goes down against its
+        // face, which is what building alongside one has always done.
+        if (event.getUsePhase() == UseItemOnBlockEvent.UsePhase.ITEM_BEFORE_BLOCK
+                && isTheBoxsOwnTurn(event, box)
+                && Copycats.fillsFromOffHand(clickedState(event))) {
+            lendMaterial(event, player, box);
+            return;
+        }
+
         // ITEM_AFTER_BLOCK is the phase where vanilla would have placed the held block: the
         // clicked block has already declined the click, so opening a chest still opens the chest.
         if (event.getUsePhase() != UseItemOnBlockEvent.UsePhase.ITEM_AFTER_BLOCK) {
@@ -154,6 +175,11 @@ public final class ShuffleHandler {
         }
 
         event.cancelWithResult(place(player, event.getUseOnContext(), box, palette));
+    }
+
+    /** The block this click landed on. */
+    private static BlockState clickedState(UseItemOnBlockEvent event) {
+        return event.getLevel().getBlockState(event.getUseOnContext().getClickedPos());
     }
 
     /**
@@ -218,27 +244,38 @@ public final class ShuffleHandler {
     public static void onServerTick(ServerTickEvent.Post event) {
         // Loans first: a lent material is in the off hand where the box should be, and topping a
         // hand up starts by looking for the box in that hand.
-        if (!LOANS.isEmpty()) {
-            for (Loan loan : LOANS.values()) {
-                settle(loan);
-            }
-
-            LOANS.clear();
+        for (Loan loan : LOANS.values()) {
+            settle(loan);
         }
 
-        if (!TOP_UPS.isEmpty()) {
-            for (Placement placement : TOP_UPS.values()) {
-                // Only the slot that was building. A player who scrolled away between placing and
-                // the end of the tick has moved on, and a block appearing in whichever slot they
-                // landed on is exactly the sort of unasked-for helpfulness this mod should not do.
-                if (placement.player().getInventory().selected == placement.slot()) {
-                    topUp(placement.player());
-                }
-            }
+        LOANS.clear();
 
-            TOP_UPS.clear();
+        for (Placement placement : TOP_UPS.values()) {
+            // Only the slot that was building. A player who scrolled away between placing and the
+            // end of the tick has moved on, and a block appearing in whichever slot they landed on
+            // is exactly the sort of unasked-for helpfulness this mod should not do.
+            if (placement.player().getInventory().selected == placement.slot()) {
+                topUp(placement.player());
+            }
         }
 
+        TOP_UPS.clear();
+    }
+
+    /**
+     * Nothing the box remembers about a player outlives their session. All three maps are keyed by
+     * player, and every one of those keys is a reference the server would otherwise hold for as
+     * long as it runs -- and a top-up owed to somebody who has left is a block handed into an
+     * inventory that has already been written to disk.
+     *
+     * <p>An outstanding loan is deliberately left where it is: the tick still to finish is what
+     * hands the box back, and dropping the entry here would be dropping the box with it.
+     */
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        UUID player = event.getEntity().getUUID();
+        HANDED_OUT.remove(player);
+        TOP_UPS.remove(player);
     }
 
     /**
@@ -246,8 +283,14 @@ public final class ShuffleHandler {
      * whichever route -- the player's own placement, the box's own turn, a copycat's placement
      * helper. Which of them actually emptied a hand is a question for the end of the tick, once the
      * placement has taken what it needed out of it.
+     *
+     * <p>Last of everyone listening, because this event is what land protection vetoes a placement
+     * with, and a vetoed placement must not leave a top-up owed: the hand it emptied never emptied.
+     * The bus does not call a listener for an event already cancelled, so going last is what makes
+     * a veto silence this rather than something to test for -- by the time an `isCanceled` check
+     * could run, running at all means it was not.
      */
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
         if (event.getLevel().isClientSide()) {
             return;
@@ -270,6 +313,13 @@ public final class ShuffleHandler {
      * scrolling past an empty one selects it.
      */
     private static void topUp(Player player) {
+        // Died or left between the placement and the end of the tick. That inventory is either
+        // already on the floor or already on disk, so a block put into it goes nowhere -- and the
+        // box would be charged for it.
+        if (!player.isAlive()) {
+            return;
+        }
+
         ItemStack box = player.getOffhandItem();
         if (!box.is(SBItems.SHUFFLER_BOX.get())) {
             return;
@@ -292,8 +342,7 @@ public final class ShuffleHandler {
 
         // Creative pays for nothing, the same way it did not spend the stack it just placed from.
         if (!player.hasInfiniteMaterials()) {
-            palette.consume(slot);
-            palette.saveTo(box);
+            charge(box, palette, slot);
         }
     }
 
@@ -319,12 +368,24 @@ public final class ShuffleHandler {
      * copycat took one.
      */
     private static void settle(Loan loan) {
+        Player player = loan.player();
+
         // Empty because the copycat took the last of what it was offered, or the same stack
         // because it did not. Anything else means something else moved that hand while the click
-        // ran, and putting the box back would overwrite whatever it put there.
-        ItemStack offHand = loan.player().getOffhandItem();
-        if (offHand == loan.material() || offHand.isEmpty()) {
-            loan.player().setItemInHand(InteractionHand.OFF_HAND, loan.box());
+        // ran, and putting the box back there would overwrite whatever it put there -- so the box
+        // goes into the bag instead, and onto the floor if the bag is full. The one thing that must
+        // not happen is the box quietly ceasing to exist: it is only reachable from this loan, so
+        // declining to hand it back is deleting it.
+        ItemStack offHand = player.getOffhandItem();
+        if (!player.isAlive()) {
+            // Died or logged out with the material still out. That inventory has already been
+            // emptied onto the floor or written to disk, so the box joins whatever else they lost
+            // rather than going into a copy of it that nobody will read.
+            player.drop(loan.box(), false);
+        } else if (offHand == loan.material() || offHand.isEmpty()) {
+            player.setItemInHand(InteractionHand.OFF_HAND, loan.box());
+        } else {
+            player.getInventory().placeItemBackInInventory(loan.box());
         }
 
         // The copycat takes its material out of the stack it found it in, and takes nothing at all
@@ -332,9 +393,17 @@ public final class ShuffleHandler {
         // without this side having to know which one it is in -- and a material offered but
         // declined leaves a plain copycat and a full box.
         if (loan.material().isEmpty()) {
-            loan.palette().consume(loan.slot());
-            loan.palette().saveTo(loan.box());
+            charge(loan.box(), loan.palette(), loan.slot());
         }
+    }
+
+    /**
+     * Takes one item out of the box, for a block it has just handed over or a material a copycat
+     * has just taken. Whether the box pays at all is the caller's question; this is what paying is.
+     */
+    private static void charge(ItemStack box, Palette palette, int slot) {
+        palette.consume(slot);
+        palette.saveTo(box);
     }
 
     /** Whether this click is the game trying to place a material the box lent to a copycat. */
@@ -382,8 +451,7 @@ public final class ShuffleHandler {
         // Creative hands out blocks for free, and the placement has already declined to charge
         // the stack it was given, so the box should not be charged either.
         if (!player.hasInfiniteMaterials()) {
-            palette.consume(slot);
-            palette.saveTo(box);
+            charge(box, palette, slot);
         }
 
         return ItemInteractionResult.SUCCESS;

@@ -57,13 +57,8 @@ public final class Palette {
      * diamonds someone parked in there -- is not part of the palette and never takes a turn.
      */
     public boolean hasPlaceable() {
-        return hasAny(stack -> true);
-    }
-
-    /** Whether the box holds anything placeable that {@code eligible} also accepts. */
-    public boolean hasAny(Predicate<ItemStack> eligible) {
         for (ItemStack stack : this.slots) {
-            if (isPlaceable(stack) && eligible.test(stack)) {
+            if (isPlaceable(stack)) {
                 return true;
             }
         }
@@ -89,25 +84,20 @@ public final class Palette {
      * @return the slot index, or -1 if no placeable slot is eligible
      */
     public int draw(RandomSource random, Predicate<ItemStack> eligible) {
-        int candidates = 0;
-        for (ItemStack stack : this.slots) {
-            if (isPlaceable(stack) && eligible.test(stack)) {
-                candidates++;
-            }
-        }
+        // The eligible slots are collected rather than counted and then walked again, so the
+        // predicate is asked once per slot. Drawing a copycat material asks a block for its shape
+        // and its collision box, which is not a question to put twice to all twenty-seven.
+        int[] candidates = new int[this.slots.size()];
+        int count = 0;
 
-        if (candidates == 0) {
-            return -1;
-        }
-
-        int chosen = random.nextInt(candidates);
         for (int slot = 0; slot < this.slots.size(); slot++) {
-            if (isPlaceable(this.slots.get(slot)) && eligible.test(this.slots.get(slot)) && chosen-- == 0) {
-                return slot;
+            ItemStack stack = this.slots.get(slot);
+            if (isPlaceable(stack) && eligible.test(stack)) {
+                candidates[count++] = slot;
             }
         }
 
-        throw new IllegalStateException("counted " + candidates + " eligible slots but ran out of them");
+        return count == 0 ? -1 : candidates[random.nextInt(count)];
     }
 
     /** The 27 slots as they currently stand, in order. Read-only. */

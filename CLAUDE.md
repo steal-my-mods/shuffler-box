@@ -269,12 +269,29 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   that costs nothing because the box is only ever charged for a material Create actually took.
   The block-entity clause is also why a Shuffler Box can never become a copycat's material.
 
+- **A copycat is lent a material when it is *clicked*, not only when it is held.** A blank copycat
+  already in the world is painted by Create from the hand that clicked it, and that hand is the one
+  holding the box, so the box lends there too (`ShuffleHandler#onUseItemOnBlock`, the
+  `fillsFromOffHand(clickedState(event))` branch). Without it that click lent nothing: Create was
+  handed the box, turned it down for being a block entity, and the click fell through to the box's
+  own turn, which placed a drawn block against the copycat's face -- the copycat you were filling
+  stayed blank and a block you never asked for appeared beside it. This is safe to offer on every
+  such click because **Create refuses to repaint a copycat that already wears something**
+  (`CopycatBlockEntity#hasCustomMaterial`, which returns the click unconsumed), so a finished
+  copycat still gets the box's ordinary turn and building alongside one is unchanged. It works at
+  all only because NeoForge's patched `ServerPlayerGameMode#useItemOn` runs the block phase as
+  `blockstate.useItemOn(player.getItemInHand(hand), ...)` -- it re-reads the hand, so a material
+  put there in the first phase is the one Create sees. Vanilla passes the stack captured before the
+  event, and against that this would be impossible without taking the click over.
+  `aBlankCopycatAlreadyPlacedIsPaintedFromTheBox` covers it, and fails without the branch rather
+  than by construction.
+
 - **A copycat with no material reports `create:copycat_base`, not an absent key.** Create stands
   that block in for null, so `aCopycatDrawnFromTheBoxIsNotMadeOfTheBox` asserts against the
   sentinel; reading it as "no material" is a test that passes for the wrong reason. The copycat
   tests skip themselves when `copycats:copycat_wall` is not registered, so a plain checkout runs
-  green -- 12 tests pass with Create 6.0.10 and Copycats+ 3.0.6 in `run-gametest/mods`, and
-  12 pass again with them removed.
+  green -- 18 tests pass with Create 6.0.10 and Copycats+ 3.0.6 in `run-gametest/mods`, and
+  18 pass again with them removed.
 
 ## Conventions
 

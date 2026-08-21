@@ -68,7 +68,9 @@ def resolve(slug, wanted):
                    loaders=json.dumps([LOADER]))
     for version in versions:
         if version['version_number'] == wanted:
-            primary = next(f for f in version['files'] if f['primary'])
+            primary = next((f for f in version['files'] if f['primary']), None)
+            if primary is None:
+                raise SystemExit(f'{slug} {wanted} lists no primary file to download.')
             return {
                 'slug': slug,
                 'version': wanted,
@@ -101,6 +103,25 @@ def download(entry, directory):
 def sha512(path):
     with open(path, 'rb') as handle:
         return hashlib.sha512(handle.read()).hexdigest()
+
+
+def prune(directory, keep, slugs):
+    """Drops versions of the mods this script manages that it no longer pins.
+
+    Without this, bumping a pin leaves the old jar beside the new one and FML refuses to load two
+    copies of the same mod -- so the fetch would have to be cleaned by hand to be useful. Only jars
+    whose name is one of these slugs followed by a version number are touched, so anything else
+    dropped into the folder by hand, and an optional mod not asked for this run, is left alone.
+    """
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith('.jar') or name in keep:
+            continue
+        for slug in slugs:
+            prefix = f'{slug}-'
+            if name.startswith(prefix) and name[len(prefix):len(prefix) + 1].isdigit():
+                os.remove(os.path.join(directory, name))
+                print(f'removed {os.path.join(directory, name)} (no longer pinned)')
+                break
 
 
 def clean(directory):
@@ -138,9 +159,15 @@ def main():
             print(f'{slug} {version}')
         return
 
+    # Everything resolved before anything is written, so a version that does not exist fails the
+    # run without having half-installed the ones before it.
+    entries = [resolve(slug, version) for slug, version in wanted]
+
     os.makedirs(directory, exist_ok=True)
-    for slug, version in wanted:
-        download(resolve(slug, version), directory)
+    for entry in entries:
+        download(entry, directory)
+
+    prune(directory, {entry['file'] for entry in entries}, [slug for slug, _ in wanted])
 
 
 if __name__ == '__main__':
