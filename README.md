@@ -55,8 +55,7 @@ block states into the world. So a modded block is placed by its own code, with t
 handed over, components and block-entity data included, which is what a block like a Create:
 Copycats+ panel needs to arrive carrying its material. Blocks that pick an orientation still pick
 one, and land-protection mods still get their veto, because the events they listen to all fire
-normally. (Copycats+ compatibility follows from that mechanism; it has not been tested against a
-Copycats+ install.)
+normally. Copycat blocks get a mode of their own, below.
 
 Two blocks of the same type carrying different data count as two different entries in the
 palette, so a box of copycat panels in three materials shuffles between the three.
@@ -65,6 +64,27 @@ Blocks the box cannot place (a stack of diamonds someone parked in there) sit in
 never take a turn. The tooltip says how many slots are stranded that way.
 
 Opening the box uses the vanilla shulker box screen, so inventory-sorting mods treat it as one.
+
+## Copycats: shape from your hand, paint from the box
+
+A copycat block takes its material from whatever you are holding in your **off hand** as it is
+placed -- the same hand the box wants. So copycats are the one thing the box does not replace.
+Hold a stack of copycat walls in your main hand with the box in your off hand, and every wall you
+place is filled with a material drawn from the box: the shape is yours, the paint is the box's,
+and each block you place can come out a different material. Your hand pays for the copycat, the
+box pays for the material. Copycats you place by the arrow -- the one that appears when you point
+at a copycat you have already placed and offers to put the next one alongside it -- are painted
+from the box too.
+
+The box only offers materials a copycat can actually wear -- full blocks, nothing with a block
+entity, no stairs, plus whatever `create:copycat_allow` and `create:copycat_deny` have to say --
+and it draws between them by slot, the same weighting as everything else. Fill three slots with
+andesite and one with brass and your copycats come out 3:1. A box holding nothing wearable (all
+slabs, say) stands aside, and the copycat is placed plain, exactly as it would be with an empty
+off hand.
+
+Which blocks count as copycats is the `shufflerbox:fills_from_off_hand` block tag. Every copycat
+in Create and Create: Copycats+ is in it; a datapack can add another mod's.
 
 ## Releasing
 

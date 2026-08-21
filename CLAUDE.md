@@ -13,6 +13,9 @@ that hands out a weighted-random block every time you place one while it is in y
 python3 tools/generate_textures.py        # redraw the block's six faces
 python3 tools/generate_test_structure.py  # redraw the GameTest platform
 python3 tools/generate_logo.py            # redraw the in-jar 256px icon
+python3 tools/fetch_dev_mods.py           # put Create + Copycats+ in run/mods, then runClient
+python3 tools/fetch_dev_mods.py --clean   # take them out again
+python3 tools/generate_copycat_tag.py     # redraw the copycat tag from those jars
 ./gradlew publishMods        # upload to CurseForge and GitHub Releases
 ./gradlew publishMods -PdryRun=true   # rehearse it without uploading anything
 ```
@@ -89,6 +92,9 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
 | `item/ShufflerBoxItem` | Tooltip showing the odds, and the no-nesting rule |
 | `registry/SB*` | Blocks, block entities, items |
 | `tools/generate_textures.py` | The block's six faces, drawn from code |
+| `compat/Copycats` | The copycat rules, asked through tags and vanilla types so nothing compiles against Create: which blocks fill from the off hand, and what may be a material |
+| `tools/fetch_dev_mods.py` | Pinned Create + Copycats+ release jars into a run directory, for compatibility testing. Not a dependency of anything |
+| `tools/generate_copycat_tag.py` | The `fills_from_off_hand` block tag, read out of those jars |
 
 ## Things that are decisions, not accidents
 
@@ -158,6 +164,76 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   opposite faces sum to seven, and within that constraint so that the three an inventory slot
   shows (top, north, east at `[30, 225]`) come out as 1, 2 and 3. Rerun the script after editing;
   don't hand-edit the PNGs, they will be overwritten.
+
+- **Mods to test against are release jars in a run directory's `mods` folder, not dependencies on
+  a run classpath** (`tools/fetch_dev_mods.py`). Create carries Flywheel, Ponder and Registrate as
+  nested jars in `META-INF/jarjar/`, and FML only unpacks those for a jar it loaded *from* a mods
+  folder; the same file added to a run's classpath loads as one flat jar, `flywheel` and `ponder`
+  never register, and Create -- which requires both -- dies during startup. A dev run does read
+  `<gameDirectory>/mods`, so the mods folder is both the simpler route and the honest one: a
+  compatibility test should load the artifact a player downloads. Nothing is wired into
+  `runClient`, so an ordinary build never reaches the network and the mod keeps its zero
+  dependencies. Run directories are gitignored, which makes the install per-clone: rerun the
+  script after a fresh checkout, and once per worktree.
+
+- **A copycat in the main hand is filled, not replaced -- because both mods want the same hand.**
+  `CopycatBlock#setPlacedBy` reads `getItemInHand(OFF_HAND)` unconditionally and takes whatever it
+  finds there as the copycat's material, which is exactly where the box lives. Two features, one
+  hand. Rather than one of them losing, the box changes job for copycats: the shape comes from the
+  hand and the box supplies the material, drawn by the same slot-weighted draw
+  (`Palette#draw` with a predicate). The hand pays for the copycat, the box pays for the material,
+  so the rule that the box pays for what the box decides still holds. Without this, a copycat in
+  hand was simply replaced by a drawn block, which is what makes the two mods look incompatible
+  even though nothing is broken.
+
+- **The material is lent, not injected, and it is lent in the first phase of the click.** A click
+  walks three phases inside `ServerPlayerGameMode#useItemOn`: `stack.onItemUseFirst`
+  (`ITEM_BEFORE_BLOCK`), then the clicked block's own `useItemOn` (`BLOCK`), then `stack.useOn`
+  (`ITEM_AFTER_BLOCK`). A copycat's **placement helper** -- the arrow offering the far edge of the
+  block you are looking at -- places the next copycat from the *clicked block's* turn, in the
+  BLOCK phase, and consumes the click, so the item phase never runs at all. A box that only
+  watched the item phase therefore lent nothing on exactly those clicks, and the copycat arrived
+  with no material: a copycat with no material draws nothing, so it was an invisible block until
+  something nearby forced a redraw, and then an untextured one. So `ShuffleHandler#lendMaterial`
+  puts the drawn material in the off hand at the first phase, cancels nothing and places nothing,
+  and whichever path the game was already taking places the copycat and reads the material as it
+  lands -- including paths this mod has never heard of. `anArrowPlacementIsPaintedFromTheBoxToo`
+  covers it, and it has to drive the block phase itself, because posting only the item-phase event
+  is what let this ship broken.
+
+- **The box goes back at the tail of the server tick** (`ServerTickEvent.Post`, which fires after
+  packet handling and before the next tick's inventory sync, so the client is never told the box
+  left that hand). Deliberately **not** `MinecraftServer#execute`, which is the obvious thing to
+  reach for and is wrong: `scheduleExecutables()` is `!isSameThread()`, so a task submitted from
+  the server thread runs *immediately* instead of being queued. That put the box back before the
+  copycat was placed, and the bug looked exactly as it had before the fix.
+
+- **The lent stack is guarded while it is out.** It is sitting in the off hand, so the game's own
+  off-hand turn -- which happens whenever the main hand's placement did not consume the click --
+  would place it as a block: one the player never asked for, paid for out of the box. Any click
+  that would use the lent stack is cancelled instead. The box is charged only if the lent stack
+  came back empty, which is what makes creative right for free (Create returns before it shrinks
+  anything) and what makes a declined material free too. `setConsumedItem` copies the stack, so
+  breaking the copycat still hands the material back.
+
+- **Which blocks are copycats is a tag** (`shufflerbox:fills_from_off_hand`, generated by
+  `tools/generate_copycat_tag.py` from the installed jars, every entry `required: false`), not a
+  check on Create's class names. It survives Create moving a class, it is the extension point for
+  any other mod's copycat-like block, and a copycat missing from it degrades to the old behaviour
+  instead of crashing. Rerun the script after a Copycats+ update. **What may be a *material* is a
+  mirror of `CopycatBlock#getAcceptedBlockState`** (`compat/Copycats`): the `create:copycat_allow`
+  and `create:copycat_deny` tags, then no block entities, no stairs, and a full cube with real
+  collision. Deliberately the conservative half of it -- an individual copycat can widen what it
+  accepts through `isAcceptedRegardless`, so Create may take a material this mirror skips, and
+  that costs nothing because the box is only ever charged for a material Create actually took.
+  The block-entity clause is also why a Shuffler Box can never become a copycat's material.
+
+- **A copycat with no material reports `create:copycat_base`, not an absent key.** Create stands
+  that block in for null, so `aCopycatDrawnFromTheBoxIsNotMadeOfTheBox` asserts against the
+  sentinel; reading it as "no material" is a test that passes for the wrong reason. The copycat
+  tests skip themselves when `copycats:copycat_wall` is not registered, so a plain checkout runs
+  green -- 12 tests pass with Create 6.0.10 and Copycats+ 3.0.6 in `run-gametest/mods`, and
+  12 pass again with them removed.
 
 ## Conventions
 

@@ -3,6 +3,7 @@ package com.shufflerbox.shuffle;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Predicate;
 
 import net.minecraft.core.NonNullList;
 import net.minecraft.core.component.DataComponents;
@@ -56,8 +57,13 @@ public final class Palette {
      * diamonds someone parked in there -- is not part of the palette and never takes a turn.
      */
     public boolean hasPlaceable() {
+        return hasAny(stack -> true);
+    }
+
+    /** Whether the box holds anything placeable that {@code eligible} also accepts. */
+    public boolean hasAny(Predicate<ItemStack> eligible) {
         for (ItemStack stack : this.slots) {
-            if (isPlaceable(stack)) {
+            if (isPlaceable(stack) && eligible.test(stack)) {
                 return true;
             }
         }
@@ -71,25 +77,37 @@ public final class Palette {
      * @return the slot index, or -1 if the box holds nothing placeable
      */
     public int draw(RandomSource random) {
-        int placeable = 0;
+        return draw(random, stack -> true);
+    }
+
+    /**
+     * Picks a slot from those {@code eligible} accepts, each one equally likely -- the same
+     * slot-weighted draw over a narrower palette. Drawing a copycat's material is one of these:
+     * only some of what a box holds can be a material, and the odds should be read off the slots
+     * that can, not off the whole box.
+     *
+     * @return the slot index, or -1 if no placeable slot is eligible
+     */
+    public int draw(RandomSource random, Predicate<ItemStack> eligible) {
+        int candidates = 0;
         for (ItemStack stack : this.slots) {
-            if (isPlaceable(stack)) {
-                placeable++;
+            if (isPlaceable(stack) && eligible.test(stack)) {
+                candidates++;
             }
         }
 
-        if (placeable == 0) {
+        if (candidates == 0) {
             return -1;
         }
 
-        int chosen = random.nextInt(placeable);
+        int chosen = random.nextInt(candidates);
         for (int slot = 0; slot < this.slots.size(); slot++) {
-            if (isPlaceable(this.slots.get(slot)) && chosen-- == 0) {
+            if (isPlaceable(this.slots.get(slot)) && eligible.test(this.slots.get(slot)) && chosen-- == 0) {
                 return slot;
             }
         }
 
-        throw new IllegalStateException("counted " + placeable + " placeable slots but ran out of them");
+        throw new IllegalStateException("counted " + candidates + " eligible slots but ran out of them");
     }
 
     /** The 27 slots as they currently stand, in order. Read-only. */

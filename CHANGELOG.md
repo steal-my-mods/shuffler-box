@@ -33,6 +33,12 @@ First release.
 - **Places modded blocks properly.** Blocks go down through the same call your own hand uses, so a
   modded block is placed by its own code with its data intact, and land-protection mods still get
   their veto.
+- **Create: Copycats+ support.** A copycat takes its material from your off hand, which is where
+  the box lives, so copycats get a mode of their own: hold copycat walls in your main hand with the
+  box in your off hand, and every wall you place is filled with a material drawn from the box.
+  Shape from your hand, paint from the box, a different material block to block. Your hand pays for
+  the copycat, the box pays for the material, and the box only offers materials a copycat can
+  actually wear.
 
 ### Known limitations
 
