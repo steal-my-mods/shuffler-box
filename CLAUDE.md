@@ -1,13 +1,14 @@
 # Shuffler Box: repo guide
 
 A standalone mod for **Minecraft 1.21.1 / NeoForge 21.1+**, no other mods required. A shulker box
-that hands out a weighted-random block every time you place one while it is in your off hand.
+that keeps feeding your main hand one weighted-random block at a time while it sits in your off
+hand.
 
 ## Commands
 
 ```bash
 ./gradlew build              # compile + jar
-./gradlew runClient          # dev client
+./gradlew runClient          # dev client -- installs Create + Copycats+ + JEI into run/mods first
 ./gradlew runServer          # dev dedicated server (needs run/eula.txt)
 ./gradlew runGameTestServer  # automated in-world tests -- the real check
 python3 tools/generate_textures.py        # redraw the block's six faces
@@ -86,7 +87,7 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
 | Path | Role |
 |---|---|
 | `shuffle/Palette` | The whole idea. A detached copy of a box's 27 slots, the weighted draw, and the even-drain rule. Pure logic, no world and no player |
-| `shuffle/ShuffleHandler` | The `UseItemOnBlockEvent` listener that swaps a hand placement for a draw |
+| `shuffle/ShuffleHandler` | Every way the box reaches into a click: topping the hand up after a placement, answering an empty-handed click itself, and lending a copycat its material |
 | `block/ShufflerBoxBlock` | The placed block. A plain full cube, deliberately not an animated shulker lid |
 | `block/ShufflerBoxBlockEntity` | The 27 slots when placed. `BaseContainerBlockEntity` already moves them in and out of the item's `minecraft:container` component |
 | `item/ShufflerBoxItem` | Tooltip showing the odds, and the no-nesting rule |
@@ -104,32 +105,67 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   reason to exist. `slotsDrainEvenlySoTheOddsHold` covers it, and asserts the spread between slots
   as well as the schedule, so shortening the drain cannot pass by accident.
 
-- **The held block is a stencil and is never consumed.** The box pays for every placement, so one
-  block placed is always one block gone from the box and there is no way to dupe through it.
+- **The box feeds the hand; it does not take placements over.** Every block is placed out of the
+  main hand by the game's own path and spent out of the main hand. All the box does is hand over one
+  more block, drawn from the palette, when a placement leaves that hand empty (`ShuffleHandler#topUp`).
+  One block at a time, so every block placed is its own draw -- that is what makes a wall mottled,
+  and what keeps the odds on each block instead of on the first of a stack of sixty-four.
 
-- **The box is reached through two separate turns, because the game gives the hands two.** A block
-  in the main hand takes the first turn and would place itself, so `isRequestToShuffle` steps in
-  there. An empty main hand takes *no* turn (`ServerPlayerGameMode#useItemOn` skips `useOn`
-  entirely for an empty stack, so no event fires for that hand at all) and the click falls
-  through to the off hand, where the box is. Handling only the main hand is what made an
-  empty-handed click place the box instead of a block; `anEmptyMainHandStillDrawsFromTheBox`
-  covers it. The off-hand turn is only ever reached once nothing else has claimed the click, which
-  is exactly the condition we want, so it does not need to test what the main hand holds.
-  Consequence: the only way to *place* a box is to hold it in the main hand
-  (`aBoxInTheMainHandStillPlacesItself`).
+  It used to be the other way round: anything in the main hand was a stencil and the box placed a
+  drawn block in its stead. That reads well until you break some sand in your floor, pick a sand
+  block up to patch it, and find you cannot place it while the box is in your off hand -- there was
+  no way to place anything deliberately short of moving the box out of the hand. Hence the flip;
+  `aBlockHeldOnPurposeIsPlacedOnPurpose` is the case it exists for, and the no-dupe property is
+  unchanged, because the box hands over an item and you place that item.
 
-- **`ShuffleHandler` cancels on the client too, and places nothing there.** `Minecraft#startUseItem`
-  walks the hands in order and stops at the first that consumes the click: if the client let the
-  main hand pass, it would go on to try the off hand and place the box itself. Cancelling without
-  a client-side prediction also means the drawn block appears once, when the server's update
-  lands, instead of the held block flashing first and being corrected.
+- **Only two things reach into a click at all.** An empty main hand takes *no* turn
+  (`ServerPlayerGameMode#useItemOn` skips `useOn` for an empty stack, so no event fires for that
+  hand), so the click falls through to the off hand where the box is, and the box answers it
+  directly: it places a drawn block and the top-up then arms the hand, which is how the loop starts
+  (`anEmptyMainHandDrawsFromTheBoxAndArmsTheHand`). And a copycat in the main hand is lent a
+  material rather than fed a block. Everything else is left alone, which is why the only way to
+  place a box is still to hold it in the main hand (`aBoxInTheMainHandStillPlacesItself`) -- now
+  simply because nothing intervenes.
 
-- **Placement goes through `ItemStack#useOn`, not `BlockItem#place`.** That call is where the
-  adventure-mode check, the block-place event that land-protection mods veto with, and every other
-  mod's listener live. Reaching past it into `place` would place the block and skip all of them.
-  The cost is that the nested call fires `UseItemOnBlockEvent` again, which is what the `DRAWING`
-  thread-local exists to absorb; `buildingFromTheBoxSpendsTheBoxAndNotTheHand` would recurse to a
-  stack overflow without it.
+- **The top-up is hung off `BlockEvent.EntityPlaceEvent` and runs at the tail of the tick.** The
+  event is the trigger because it means *a block was placed*, whichever route placed it -- the
+  player's own hand, the box's own turn, a copycat's placement helper -- and the check waits for the
+  end of the tick because whether the hand is empty is only settled once the placement has taken
+  what it needs out of it. Hanging it off the click instead would fire on clicks that placed
+  nothing, which in creative (see below) would rummage through the hand every time the player
+  right-clicked a chest.
+
+- **Creative is read from the other side, and still only ever after a placement.** Creative spends
+  nothing, so a hand that empties never fills again on its own and the box would sit inert in the
+  mode most of the building happens in. So there it **replaces the stack it handed over** once a
+  placement has been made with it, tracked by keeping hold of that stack and comparing by identity;
+  anything else in the hand is the player's own and is left alone. An empty-handed click starts the
+  loop, the same as in survival. A data component on the drawn item would be the obvious way to
+  mark it and is worse: a component changes an item's identity, so the box's cobblestone would
+  refuse to stack with the player's. `creativeGetsAFreshBlockAfterEveryPlacement` asserts the stack
+  was *replaced* rather than that it still holds andesite, which would pass without a redraw
+  happening at all.
+
+- **Filling empty hands on sight was tried, and taken back out.** It was meant to save creative the
+  one gesture that starts the loop -- put the box in the off hand, select an empty slot, build --
+  and it made the box unusable: "the hand" is whichever hotbar slot is selected, so scrolling along
+  the bar selected each empty slot in turn and the box dutifully loaded every one of them with a
+  random block. **Anything that reaches for a hand without a placement to justify it has this
+  failure mode.** The same mistake in miniature is topping up the wrong slot, so a placement now
+  records which slot made it and the top-up is skipped if the player scrolled off that slot before
+  the end of the tick (`toppingUpFollowsTheSlotThatPlaced`).
+
+- **`ShuffleHandler` cancels the off-hand turn on the client too, and places nothing there.**
+  `Minecraft#startUseItem` walks the hands in order and stops at the first that consumes the click,
+  so a client that let the off-hand turn pass would place the box itself. Cancelling without a
+  client-side prediction also means the drawn block appears once, when the server's update lands.
+
+- **The box's own placement goes through `ItemStack#useOn`, not `BlockItem#place`.** That call is
+  where the adventure-mode check, the block-place event that land-protection mods veto with, and
+  every other mod's listener live. Reaching past it into `place` would place the block and skip all
+  of them. The cost is that the nested call fires `UseItemOnBlockEvent` again, which is what the
+  `DRAWING` thread-local exists to absorb -- without it the empty-hand path recurses to a stack
+  overflow. Since the feed-the-hand flip this is the only placement the mod makes itself.
 
 - **Both sides decide to intercept from the same synced state** (`Palette#hasPlaceable` over the
   item's `minecraft:container` component). Anything that made the client and server disagree about
@@ -172,9 +208,14 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   never register, and Create -- which requires both -- dies during startup. A dev run does read
   `<gameDirectory>/mods`, so the mods folder is both the simpler route and the honest one: a
   compatibility test should load the artifact a player downloads. Nothing is wired into
-  `runClient`, so an ordinary build never reaches the network and the mod keeps its zero
-  dependencies. Run directories are gitignored, which makes the install per-clone: rerun the
-  script after a fresh checkout, and once per worktree.
+  `build`, so an ordinary build never reaches the network and the mod keeps its zero dependencies.
+  Run directories are gitignored, which makes the install per-clone -- and forgetting it means a
+  client that comes up quietly *unable* to test the copycat behaviour, which happened twice before
+  `runClient` was wired to `installDevMods`. That task declares `run/mods` as its output, so it runs
+  once per clone or worktree and is up to date from then on, and a machine with no network gets a
+  warning and a client without the mods rather than no client at all. It is on `runClient` alone:
+  `runGameTestServer` has to be able to run both with these mods and without, which is the whole
+  point of the tests skipping themselves when Copycats+ is absent.
 
 - **A copycat in the main hand is filled, not replaced -- because both mods want the same hand.**
   `CopycatBlock#setPlacedBy` reads `getItemInHand(OFF_HAND)` unconditionally and takes whatever it

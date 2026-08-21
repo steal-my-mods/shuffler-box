@@ -12,39 +12,49 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.phys.BlockHitResult;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.UseItemOnBlockEvent;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /**
- * Turns an ordinary block placement into a draw from the Shuffler Box in the player's off hand.
+ * Keeps a hand full of the Shuffler Box's blocks while the box is in the player's off hand.
  *
- * <p>Anything in the main hand is a stencil, not a supply: it decides <i>that</i> a block goes
- * here, and the box decides <i>which</i>. So the held stack is never spent -- the box pays for
- * every placement, and one block placed is always one block gone from the box. An empty main hand
- * works just as well; the box is the only thing the placement needs.
+ * <p><b>The box does not take placements over.</b> Every block goes down the way the game placed
+ * it, out of the main hand and spent from the main hand, so a block picked on purpose is placed on
+ * purpose and a stack of sand stays a stack of sand. What the box does is <i>top the hand up</i>:
+ * whenever a placement leaves the main hand empty, it hands over one more block, drawn from the
+ * palette. One at a time, so every block placed is its own fresh draw -- which is what makes a
+ * wall come out mottled, and what keeps the odds on every single block rather than on the stack.
  *
- * <p>The one way to place the box itself is to hold it in your <i>main</i> hand.
+ * <p>Two ways in besides that. An <b>empty main hand</b> takes no turn of its own, so the click
+ * falls through to the off hand and the box answers it directly: it places a drawn block and then
+ * arms the hand, which is what starts the loop. And a <b>copycat</b> in the main hand is filled
+ * rather than fed -- it takes its material from whatever is in the off hand as it lands, so the box
+ * lends it one out of the palette instead of handing over a block to place. Shape from the hand,
+ * paint from the box. See {@link Copycats}.
  *
- * <p>A copycat block in the main hand is the exception, because it wants the off hand for itself:
- * a copycat takes its material from whatever is held there as it is placed. So the box does not
- * replace it -- the copycat goes down from the hand, and the box supplies its material, drawn from
- * the palette by the same slot-weighted draw. Shape from the hand, paint from the box. See
- * {@link Copycats}.
+ * <p>The one way to place the box itself is still to hold it in your main hand, which is now simply
+ * what happens rather than something this class arranges.
  *
- * <p>That one is done by <i>lending</i> rather than by intercepting: the drawn material is put in
- * the off hand at the first phase of the click and the box goes back at the end of the tick, so
- * whichever path the game uses to place the copycat finds a material there. Intercepting the
- * item's own placement instead only covers half of it -- a copycat's placement helper, the arrow
- * that offers the far edge of the block you are looking at, places the block during the *block*
- * phase, and a box that only watches the item phase never gets asked. That is what left copycats
- * placed by the arrow with no material at all, and a copycat with no material draws nothing:
- * an invisible block until something nearby forces it to redraw.
+ * <p><b>Creative bends the rule</b>, because nothing is spent there and so a hand that empties never
+ * fills again on its own. There the box replaces the block it handed over once that block has been
+ * placed, which keeps the loop running after an empty-handed click has started it. What it does
+ * <i>not</i> do is go looking for empty hands to fill. That was tried: since the hand is whichever
+ * hotbar slot happens to be selected, scrolling across an empty slot selected it and the box loaded
+ * it, so running along the hotbar came back with a random block in every empty slot.
+ *
+ * <p>Lending is done by putting the drawn material in the off hand at the first phase of the click
+ * and putting the box back at the end of the tick, so whichever path the game uses to place the
+ * copycat finds a material there. Watching the item's own placement covers only half of it: a
+ * copycat's placement helper -- the arrow offering the far edge of the block you are looking at --
+ * places during the *block* phase, and a box that only watched the item phase never got asked.
+ * That is what left arrow-placed copycats with no material, and a copycat with no material draws
+ * nothing at all.
  */
 @EventBusSubscriber(modid = ShufflerBox.ID)
 public final class ShuffleHandler {
@@ -65,6 +75,20 @@ public final class ShuffleHandler {
      * from the client thread as well, which is what the concurrent map is for.
      */
     private static final Map<UUID, Loan> LOANS = new ConcurrentHashMap<>();
+
+    /** Placements made this tick, by player, and so the hands that may need topping up. */
+    private static final Map<UUID, Placement> TOP_UPS = new ConcurrentHashMap<>();
+
+    /**
+     * The stack the box last handed each player, by identity. Only creative needs it: nothing is
+     * spent there, so "you have used up what the box gave you" cannot be read off an empty hand
+     * and has to be read off the stack still being the one the box handed over.
+     *
+     * <p>A marker on the item itself would be the other way to do this, and would be worse: a
+     * component changes an item's identity, so the box's cobblestone would refuse to stack with
+     * the player's own.
+     */
+    private static final Map<UUID, ItemStack> HANDED_OUT = new ConcurrentHashMap<>();
 
     private ShuffleHandler() {}
 
@@ -109,7 +133,7 @@ public final class ShuffleHandler {
             return;
         }
 
-        if (!isRequestToShuffle(event, box)) {
+        if (!isTheBoxsOwnTurn(event, box)) {
             return;
         }
 
@@ -120,12 +144,10 @@ public final class ShuffleHandler {
             return;
         }
 
-        // The client has to take the interaction too, even though the server does the work.
-        // Minecraft#startUseItem walks the hands in order and stops at the first that consumes
-        // the click -- if the client let a main-hand turn pass, it would go on to try the off
-        // hand and place the box itself. It places nothing of its own: with no prediction to
-        // correct, the drawn block simply appears when the server's update arrives, rather than
-        // the held block appearing first and being swapped out a moment later.
+        // The client has to take this interaction too, even though the server does the work: if it
+        // let the off-hand turn pass it would place the box itself. It places nothing of its own,
+        // so the drawn block simply appears when the server's update arrives rather than the box
+        // appearing first and being corrected a moment later.
         if (event.getLevel().isClientSide) {
             event.cancelWithResult(ItemInteractionResult.SUCCESS);
             return;
@@ -135,27 +157,20 @@ public final class ShuffleHandler {
     }
 
     /**
-     * Whether this click is a player asking the box for a block.
+     * Whether this click is the box's own turn to place something, which is only ever the off-hand
+     * turn.
      *
-     * <p>Two ways in, because the game gives the hands two separate turns. A block in the main
-     * hand gets the first turn and would place itself, so the box steps in there. An empty main
-     * hand -- or one holding something with nothing to do with this block, like a sword -- takes
-     * no turn at all, and the click falls through to the off hand, where the box is: reaching
-     * that point means nothing else wanted the click, so the box answers with a block rather
-     * than placing itself.
+     * <p>The main hand is left alone on purpose. A block held there takes the first turn and places
+     * itself -- that is the whole rule now, and the box tops the hand up afterwards instead of
+     * taking the placement over, so a block held deliberately is placed deliberately. An empty main
+     * hand takes no turn at all ({@code ServerPlayerGameMode#useItemOn} skips an empty stack, so no
+     * event fires for that hand), and the click falls through to the off hand, where the box is.
+     * Reaching here means nothing else wanted the click, so the box answers it with a block rather
+     * than placing itself. (Not simply true: another mod can build a context around any stack it
+     * likes.)
      */
-    private static boolean isRequestToShuffle(UseItemOnBlockEvent event, ItemStack box) {
-        ItemStack held = event.getItemStack();
-
-        if (event.getHand() == InteractionHand.MAIN_HAND) {
-            // Placing a second box is placing a box. Anything that is not a block was never
-            // going to place anything, so leave it to the off-hand turn below.
-            return !held.is(SBItems.SHUFFLER_BOX.get()) && held.getItem() instanceof BlockItem;
-        }
-
-        // The off-hand turn, which is the box's own. (Not simply true: another mod can build a
-        // context around any stack it likes.)
-        return held == box;
+    private static boolean isTheBoxsOwnTurn(UseItemOnBlockEvent event, ItemStack box) {
+        return event.getHand() == InteractionHand.OFF_HAND && event.getItemStack() == box;
     }
 
     /**
@@ -201,15 +216,102 @@ public final class ShuffleHandler {
      */
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        if (LOANS.isEmpty()) {
+        // Loans first: a lent material is in the off hand where the box should be, and topping a
+        // hand up starts by looking for the box in that hand.
+        if (!LOANS.isEmpty()) {
+            for (Loan loan : LOANS.values()) {
+                settle(loan);
+            }
+
+            LOANS.clear();
+        }
+
+        if (!TOP_UPS.isEmpty()) {
+            for (Placement placement : TOP_UPS.values()) {
+                // Only the slot that was building. A player who scrolled away between placing and
+                // the end of the tick has moved on, and a block appearing in whichever slot they
+                // landed on is exactly the sort of unasked-for helpfulness this mod should not do.
+                if (placement.player().getInventory().selected == placement.slot()) {
+                    topUp(placement.player());
+                }
+            }
+
+            TOP_UPS.clear();
+        }
+
+    }
+
+    /**
+     * Every block placed is a placement that might have emptied a hand, whoever made it and by
+     * whichever route -- the player's own placement, the box's own turn, a copycat's placement
+     * helper. Which of them actually emptied a hand is a question for the end of the tick, once the
+     * placement has taken what it needed out of it.
+     */
+    @SubscribeEvent
+    public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
+        if (event.getLevel().isClientSide()) {
             return;
         }
 
-        for (Loan loan : LOANS.values()) {
-            settle(loan);
+        if (event.getEntity() instanceof Player player) {
+            TOP_UPS.put(player.getUUID(), new Placement(player, player.getInventory().selected));
+        }
+    }
+
+    /**
+     * Hands one drawn block to a player whose placement used up what they were holding, and charges
+     * the box for it. One block, never a stack: a fresh draw for every block placed is what a
+     * shuffled wall is made of, and it keeps the palette's odds on each block rather than on the
+     * first of a stack of sixty-four.
+     *
+     * <p>Only ever called for a hand that has just placed something, and only for the slot that
+     * placed it. Nothing here goes looking for empty hands: doing that was tried, and it is what
+     * filled a whole hotbar with random blocks, because "the hand" is whichever slot is selected and
+     * scrolling past an empty one selects it.
+     */
+    private static void topUp(Player player) {
+        ItemStack box = player.getOffhandItem();
+        if (!box.is(SBItems.SHUFFLER_BOX.get())) {
+            return;
         }
 
-        LOANS.clear();
+        if (!isSpent(player, player.getMainHandItem())) {
+            return;
+        }
+
+        Palette palette = Palette.of(box);
+        int slot = palette.draw(player.getRandom());
+        if (slot < 0) {
+            // An empty box, or one holding nothing it can place. The hand stays as it is.
+            return;
+        }
+
+        ItemStack drawn = palette.sample(slot);
+        player.setItemInHand(InteractionHand.MAIN_HAND, drawn);
+        HANDED_OUT.put(player.getUUID(), drawn);
+
+        // Creative pays for nothing, the same way it did not spend the stack it just placed from.
+        if (!player.hasInfiniteMaterials()) {
+            palette.consume(slot);
+            palette.saveTo(box);
+        }
+    }
+
+    /**
+     * Whether the placement just made used up what the hand was holding.
+     *
+     * <p>In survival that is an empty hand and nothing else. Creative spends nothing, so there the
+     * question has to be asked from the other side: the block the box handed over is still sitting
+     * in the hand, and placing it was what it was for, so it is replaced. Anything else in the hand
+     * is something the player chose, and is left alone -- which is the entire point of the box no
+     * longer touching placements.
+     */
+    private static boolean isSpent(Player player, ItemStack held) {
+        if (held.isEmpty()) {
+            return true;
+        }
+
+        return player.hasInfiniteMaterials() && held == HANDED_OUT.get(player.getUUID());
     }
 
     /**
@@ -243,6 +345,9 @@ public final class ShuffleHandler {
 
     /** A material lent out of a box, and everything needed to square it up afterwards. */
     private record Loan(Player player, ItemStack box, ItemStack material, Palette palette, int slot) {}
+
+    /** A placement waiting to be judged at the end of the tick, and the hotbar slot that made it. */
+    private record Placement(Player player, int slot) {}
 
     private static ItemInteractionResult place(Player player, UseOnContext context, ItemStack box, Palette palette) {
         int slot = palette.draw(player.getRandom());

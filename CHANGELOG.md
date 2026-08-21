@@ -14,19 +14,25 @@ First release.
 
 ### Added
 
-- **Shuffler Box.** A shulker box you fill with a palette of blocks. Hold it in your off hand and
-  every block you place is drawn at random from the box instead of from your hand, so a wall comes
-  out mottled without you cycling hotbar slots for an hour. Craft it from two shulker shells, a
-  chest, a bone block and an ink sac.
+- **Shuffler Box.** A shulker box you fill with a palette of blocks. Hold it in your off hand and it
+  keeps feeding your other hand one random block at a time out of that palette, so a wall comes out
+  mottled without you cycling hotbar slots for an hour. Craft it from two shulker shells, a chest, a
+  bone block and an ink sac.
 - **Odds set by slots, not stack sizes.** Three slots of cobblestone against one of stone is three
   cobblestone for every stone, whether those slots hold a full stack each or a single block each.
   Hovering the box lists the palette as percentages.
 - **Odds that hold while you build.** Every draw takes from the *fullest* slot of that block, so a
   slot only empties once every slot of its kind is down to its last item. A palette set to 3:1
   stays at 3:1 instead of sliding to 2:1 and then 1:1 as the box drains.
-- **Nothing in your main hand is spent.** Whatever you hold is a stencil. It says *that* a block
-  goes here, and the box says *which*. An empty hand works just as well. To place the box itself,
-  hold it in your main hand.
+- **It never takes over a placement.** Every block is placed out of your main hand, the ordinary
+  way. The box only hands you the next one when a placement leaves that hand empty, so a stack you
+  picked up on purpose -- sand to patch a floor, one particular stone -- places exactly where you
+  point, and the box picks up again when it runs out. Right-clicking with an empty hand places a
+  block and arms your hand, which is how you start. To place the box itself, hold it in your main
+  hand.
+- **In creative it keeps itself going.** Nothing is ever spent in creative, so rather than waiting for
+  your hand to run dry the box swaps in a fresh block after each placement. Right-click once with an
+  empty hand to start it off. A stack you picked out yourself is still left alone.
 - **Behaves like a shulker box otherwise.** 27 slots, the vanilla shulker screen, contents kept
   when broken and carried, no boxes inside boxes, comparator output, and it will not be pushed by
   a piston.

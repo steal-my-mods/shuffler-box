@@ -45,8 +45,8 @@ import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 /**
- * The two things this mod has to get right: the odds match the slots a player laid out, and
- * building from the box spends the box rather than the hand.
+ * The two things this mod has to get right: the odds match the slots a player laid out, and the box
+ * tops the hand up without ever taking a placement over.
  */
 @GameTestHolder(ShufflerBox.ID)
 @PrefixGameTestTemplate(false)
@@ -151,15 +151,57 @@ public class ShufflerBoxGameTests {
     }
 
     /**
-     * The whole feature, end to end. A box of nothing but cobblestone makes the outcome
-     * deterministic, so the test is about where the block came from and who paid for it.
+     * The top-up follows the slot that did the placing and no other. Scroll away before the end of
+     * the tick and you have moved on, so nothing is put anywhere -- neither in the slot you left
+     * nor in the one you landed on.
+     *
+     * <p>This is the shape of the bug that came of filling empty hands on sight: "the hand" is
+     * whichever hotbar slot is selected, so anything that goes looking for an empty one ends up
+     * loading whatever the player is scrolling past.
      */
     @GameTest(template = "platform")
-    public static void buildingFromTheBoxSpendsTheBoxAndNotTheHand(GameTestHelper helper) {
+    public static void toppingUpFollowsTheSlotThatPlaced(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 64));
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.getInventory().selected = 0;
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.SAND, 1));
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        UseItemOnBlockEvent event = clickTopOf(helper, player, FLOOR, InteractionHand.MAIN_HAND);
+        NeoForge.EVENT_BUS.post(event);
+        event.getUseOnContext().getItemInHand().useOn(event.getUseOnContext());
+
+        helper.assertBlockPresent(Blocks.SAND, FLOOR.above());
+
+        // Scrolled on to the next slot before the tick is out.
+        player.getInventory().selected = 1;
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getInventory().getItem(1).isEmpty(),
+                    "the slot scrolled to should have been left empty, but holds "
+                            + player.getInventory().getItem(1).getHoverName().getString());
+            helper.assertTrue(player.getInventory().getItem(0).isEmpty(),
+                    "the slot that placed was left behind, so nothing should have gone into it either");
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 64,
+                    "nothing was handed over, so the box should not have paid: it holds "
+                            + countIn(box, Items.ANDESITE));
+            helper.succeed();
+        });
+    }
+
+    /**
+     * The rule the box lives by now: a block held on purpose is placed on purpose. A box full of
+     * cobblestone in the off hand has nothing to say about the sand you went and picked up to patch
+     * a hole in the floor.
+     */
+    @GameTest(template = "platform")
+    public static void aBlockHeldOnPurposeIsPlacedOnPurpose(GameTestHelper helper) {
         helper.setBlock(FLOOR, Blocks.STONE);
 
         ItemStack box = boxOf(new ItemStack(Items.COBBLESTONE, 64));
-        ItemStack held = new ItemStack(Items.DIRT, 5);
+        ItemStack held = new ItemStack(Items.SAND, 5);
 
         Player player = helper.makeMockPlayer(GameType.SURVIVAL);
         player.setItemInHand(InteractionHand.MAIN_HAND, held);
@@ -168,24 +210,117 @@ public class ShufflerBoxGameTests {
         UseItemOnBlockEvent event = clickTopOf(helper, player, FLOOR, InteractionHand.MAIN_HAND);
         NeoForge.EVENT_BUS.post(event);
 
-        helper.assertTrue(event.isCanceled(), "the box should have taken the placement over");
-        helper.assertTrue(event.getCancellationResult() == ItemInteractionResult.SUCCESS,
-                "an off-hand box that placed a block should report success, not " + event.getCancellationResult());
-        helper.assertBlockPresent(Blocks.COBBLESTONE, FLOOR.above());
+        helper.assertTrue(!event.isCanceled(),
+                "the box has no business in a main-hand placement and should have stood aside");
 
-        helper.assertTrue(held.getCount() == 5,
-                "the held stack is a stencil, not a supply, but it went from 5 to " + held.getCount());
-        helper.assertTrue(countIn(box, Items.COBBLESTONE) == 63,
-                "the box should have paid for the block, but holds " + countIn(box, Items.COBBLESTONE));
-        helper.succeed();
+        event.getUseOnContext().getItemInHand().useOn(event.getUseOnContext());
+
+        helper.assertBlockPresent(Blocks.SAND, FLOOR.above());
+        helper.assertTrue(held.getCount() == 4,
+                "the sand pays for itself, so it should have gone 5 to 4, not to " + held.getCount());
+
+        // And with sand still in hand there is nothing to top up, so the box stays shut.
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().is(Items.SAND),
+                    "the hand still had sand in it and should have been left alone, but holds "
+                            + player.getMainHandItem().getHoverName().getString());
+            helper.assertTrue(countIn(box, Items.COBBLESTONE) == 64,
+                    "the box should not have spent anything, but holds " + countIn(box, Items.COBBLESTONE));
+            helper.succeed();
+        });
+    }
+
+    /**
+     * The other half of that rule, and what makes a wall come out mottled: spend the last of what
+     * you were holding and the box hands over the next block, one at a time.
+     */
+    @GameTest(template = "platform")
+    public static void spendingTheLastBlockRefillsTheHandFromTheBox(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 64));
+        ItemStack held = new ItemStack(Items.SAND, 1);
+
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, held);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        UseItemOnBlockEvent event = clickTopOf(helper, player, FLOOR, InteractionHand.MAIN_HAND);
+        NeoForge.EVENT_BUS.post(event);
+        event.getUseOnContext().getItemInHand().useOn(event.getUseOnContext());
+
+        helper.assertBlockPresent(Blocks.SAND, FLOOR.above());
+        helper.assertTrue(player.getMainHandItem().isEmpty(),
+                "the sand was the last of the stack and should be gone from the hand");
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().is(Items.ANDESITE),
+                    "the box should have handed over an andesite once the hand ran dry, not "
+                            + player.getMainHandItem().getHoverName().getString());
+            helper.assertTrue(player.getMainHandItem().getCount() == 1,
+                    "one block at a time, or the odds stop being read off the slots; got "
+                            + player.getMainHandItem().getCount());
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 63,
+                    "the box should have paid for what it handed over, but holds " + countIn(box, Items.ANDESITE));
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Creative spends nothing, so an empty hand never comes round and the box would have nothing to
+     * react to. It goes by the stack it handed over instead: placing that is what it was for, so it
+     * is replaced by the next draw. Without this the box is inert in creative, which is where most
+     * of the building happens.
+     */
+    @GameTest(template = "platform")
+    public static void creativeGetsAFreshBlockAfterEveryPlacement(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 64));
+        Player player = helper.makeMockPlayer(GameType.CREATIVE);
+        // makeMockPlayer overrides isCreative() but not the abilities, and hasInfiniteMaterials --
+        // which is what both the game and this mod actually read -- comes off instabuild.
+        player.getAbilities().instabuild = true;
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        UseItemOnBlockEvent armed = clickTopOf(helper, player, FLOOR, InteractionHand.OFF_HAND);
+        NeoForge.EVENT_BUS.post(armed);
+
+        helper.runAfterDelay(2, () -> {
+            ItemStack first = player.getMainHandItem();
+            helper.assertTrue(first.is(Items.ANDESITE),
+                    "the box should have armed the hand, but it holds " + first.getHoverName().getString());
+
+            UseItemOnBlockEvent again = clickTopOf(helper, player, FLOOR.above(), InteractionHand.MAIN_HAND);
+            NeoForge.EVENT_BUS.post(again);
+            again.getUseOnContext().getItemInHand().useOn(again.getUseOnContext());
+
+            helper.assertTrue(!first.isEmpty(), "creative should not have spent the block it placed");
+
+            helper.runAfterDelay(2, () -> {
+                helper.assertTrue(player.getMainHandItem() != first,
+                        "creative should have been handed a fresh draw after placing, not kept the same stack");
+                helper.assertTrue(player.getMainHandItem().is(Items.ANDESITE),
+                        "the fresh draw should still come out of the box, not "
+                                + player.getMainHandItem().getHoverName().getString());
+                helper.assertTrue(countIn(box, Items.ANDESITE) == 64,
+                        "creative pays for nothing, but the box is down to " + countIn(box, Items.ANDESITE));
+                helper.succeed();
+            });
+        });
     }
 
     /**
      * An empty main hand takes no turn of its own, so the click falls through to the off hand --
      * where the box is. Reaching the box that way used to place the box.
+     *
+     * <p>It is also how the loop starts: the click places a block and then arms the hand, so the
+     * next click is an ordinary placement with the box topping the hand up behind it. Two blocks
+     * leave the box for that first click, one into the world and one into the hand.
      */
     @GameTest(template = "platform")
-    public static void anEmptyMainHandStillDrawsFromTheBox(GameTestHelper helper) {
+    public static void anEmptyMainHandDrawsFromTheBoxAndArmsTheHand(GameTestHelper helper) {
         helper.setBlock(FLOOR, Blocks.STONE);
 
         ItemStack box = boxOf(new ItemStack(Items.COBBLESTONE, 64));
@@ -200,7 +335,16 @@ public class ShufflerBoxGameTests {
         helper.assertBlockPresent(Blocks.COBBLESTONE, FLOOR.above());
         helper.assertTrue(countIn(box, Items.COBBLESTONE) == 63,
                 "the box should have paid for the block, but holds " + countIn(box, Items.COBBLESTONE));
-        helper.succeed();
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().is(Items.COBBLESTONE),
+                    "the hand should have been armed for the next click, but holds "
+                            + player.getMainHandItem().getHoverName().getString());
+            helper.assertTrue(countIn(box, Items.COBBLESTONE) == 62,
+                    "one block into the world and one into the hand is two out of the box, but it holds "
+                            + countIn(box, Items.COBBLESTONE));
+            helper.succeed();
+        });
     }
 
     /** The one way to put a box down: hold it in the main hand. It must not shuffle itself away. */
@@ -221,20 +365,29 @@ public class ShufflerBoxGameTests {
         helper.succeed();
     }
 
-    /** Without a box in the off hand nothing is intercepted, and the held block places itself. */
+    /** An empty box has nothing to hand over, so a hand that runs dry stays dry. */
     @GameTest(template = "platform")
-    public static void anEmptyBoxLeavesTheHeldBlockAlone(GameTestHelper helper) {
+    public static void anEmptyBoxHandsOverNothing(GameTestHelper helper) {
         helper.setBlock(FLOOR, Blocks.STONE);
 
         Player player = helper.makeMockPlayer(GameType.SURVIVAL);
-        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.DIRT, 5));
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.DIRT, 1));
         player.setItemInHand(InteractionHand.OFF_HAND, new ItemStack(SBItems.SHUFFLER_BOX.get()));
 
         UseItemOnBlockEvent event = clickTopOf(helper, player, FLOOR, InteractionHand.MAIN_HAND);
         NeoForge.EVENT_BUS.post(event);
 
         helper.assertTrue(!event.isCanceled(), "an empty box has nothing to give and should stand aside");
-        helper.succeed();
+
+        event.getUseOnContext().getItemInHand().useOn(event.getUseOnContext());
+        helper.assertBlockPresent(Blocks.DIRT, FLOOR.above());
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().isEmpty(),
+                    "an empty box cannot top a hand up, but the hand came back holding "
+                            + player.getMainHandItem().getHoverName().getString());
+            helper.succeed();
+        });
     }
 
     /**
