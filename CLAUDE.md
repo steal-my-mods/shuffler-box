@@ -35,6 +35,12 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
 - **`minecraft_version_range` is `[1.21.1,1.21.2)`,** not the MDK's default `[1.21.1,1.22)`. The
   mod is built against 1.21.1's block-entity component and interaction APIs; the wider range would
   let it install on 1.21.4 and break there instead of refusing.
+- **A `v*` tag runs the workflow; the GitHub release lands on a tag *without* the `v`.**
+  `publishGithub` names its release after `mod_version` and creates that tag itself, so a release
+  ends with two tags on one commit: `v0.2.0`, which triggered it, and `0.2.0`, which the release
+  and the jar are attached to. `gh release view v0.2.0` reports "release not found"; the release is
+  `gh release view 0.2.0`. Same on 0.1.0, so it is the shape of every release here, not a slip.
+
 - **The changelog drives the release notes.** `publishMods` reads the `CHANGELOG.md` section whose
   heading names the current `mod_version` and fails if there isn't one, because a missing entry should
   stop a release rather than ship the previous version's notes under a new number. It is wired as
