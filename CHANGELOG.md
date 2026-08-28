@@ -8,7 +8,7 @@ Notable changes to Shuffler Box, newest first. The format follows
 CurseForge and GitHub, so write entries for a player reading a download page, not for someone
 reading the diff.
 
-## [Unreleased]
+## [0.2.0] - 2026-08-28
 
 ### Added
 
