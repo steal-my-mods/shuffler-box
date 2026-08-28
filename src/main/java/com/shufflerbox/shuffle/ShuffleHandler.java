@@ -19,6 +19,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.entity.living.LivingSwapItemsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.UseItemOnBlockEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
@@ -40,6 +41,11 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * rather than fed -- it takes its material from whatever is in the off hand as it lands, so the box
  * lends it one out of the palette instead of handing over a block to place. Shape from the hand,
  * paint from the box. See {@link Copycats}.
+ *
+ * <p><b>And it takes the last one back.</b> Building ends with a block in your hand that the box
+ * handed you and you never placed, so swapping hands gives it back: the block goes into the box and
+ * the box comes out into your main hand, ready to be put away. Only ever the stack the box handed
+ * over -- a block you picked up yourself is yours, even when the box stocks the same kind.
  *
  * <p>The one way to place the box itself is still to hold it in your main hand, which is now simply
  * what happens rather than something this class arranges.
@@ -299,6 +305,71 @@ public final class ShuffleHandler {
         if (event.getEntity() instanceof Player player) {
             TOP_UPS.put(player.getUUID(), new Placement(player, player.getInventory().selected));
         }
+    }
+
+    /**
+     * Gives the box back the block it handed over, when the player swaps hands with it.
+     *
+     * <p>Building ends the same way every time: one block left in the hand that the box drew and
+     * you never placed, and no way to return it short of putting the box down, opening it and
+     * dropping the block in. So the gesture you would make anyway does it -- the swap key, which
+     * is how the box comes out of the off hand in the first place. The block goes into the box on
+     * its way past, and you end up holding the box with nothing left over.
+     *
+     * <p><b>Only the stack the box handed you</b>, by identity, the same marker creative already
+     * reads to know its block was spent. Not "a block the box stocks": a box of cobblestone would
+     * then swallow the cobblestone you mined yourself the moment you swapped hands, which is the
+     * same unasked-for helpfulness as filling a hotbar. Whatever came into that stack afterwards --
+     * pickups land in the slot you are holding first -- goes back with it, which is where you would
+     * have put it anyway.
+     *
+     * <p>The marker does not survive a logout, so logging back in and swapping without placing
+     * anything first is an ordinary swap. Place one more block and the top-up arms it again.
+     *
+     * <p>Last of everyone listening, for the same reason the placement is: this event is
+     * cancellable, and a cancelled swap that had already paid the block into the box would leave
+     * the player holding a copy of it. The bus does not call a listener for an event already
+     * cancelled, so going last is what makes that impossible rather than something to test for.
+     */
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public static void onSwapHands(LivingSwapItemsEvent.Hands event) {
+        if (!(event.getEntity() instanceof Player player)) {
+            return;
+        }
+
+        ItemStack box = player.getOffhandItem();
+        if (!box.is(SBItems.SHUFFLER_BOX.get())) {
+            return;
+        }
+
+        ItemStack held = player.getMainHandItem();
+        if (held.isEmpty() || held != HANDED_OUT.get(player.getUUID())) {
+            return;
+        }
+
+        // Handed back, so no longer handed out. Leaving it would let the next swap of an identical
+        // stack -- the same object, back in the hand by some other route -- be read as this one.
+        HANDED_OUT.remove(player.getUUID());
+
+        // Creative was never charged for the block it was given, so giving it back credits nothing
+        // and the block simply goes. Crediting would turn the swap key into a printer: hold a box
+        // of one cobblestone, click, swap, and the box has two.
+        //
+        // The box itself is not touched here either way. It is the off-hand stack, which is the
+        // stack the swap is already about to move to the main hand, so writing the palette into it
+        // writes into the one the player ends up holding.
+        if (player.hasInfiniteMaterials()) {
+            event.setItemSwappedToOffHand(ItemStack.EMPTY);
+            return;
+        }
+
+        Palette palette = Palette.of(box);
+        ItemStack remainder = palette.putBack(held);
+        palette.saveTo(box);
+
+        // What the box could not hold makes the swap it was always going to make, and ends up in
+        // the off hand the box has just left.
+        event.setItemSwappedToOffHand(remainder);
     }
 
     /**

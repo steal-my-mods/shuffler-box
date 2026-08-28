@@ -63,6 +63,9 @@ public class ShufflerBoxItem extends BlockItem {
                     .withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
         }
 
-        lines.add(Component.translatable("tooltip.shufflerbox.hint").withStyle(ChatFormatting.DARK_GRAY));
+        lines.add(Component.translatable("tooltip.shufflerbox.hint.hold").withStyle(ChatFormatting.DARK_GRAY));
+        // The gesture that ends a session is worth a line of its own: a box that quietly takes its
+        // last block back when you swap hands is a box nobody discovers doing it.
+        lines.add(Component.translatable("tooltip.shufflerbox.hint.swap").withStyle(ChatFormatting.DARK_GRAY));
     }
 }

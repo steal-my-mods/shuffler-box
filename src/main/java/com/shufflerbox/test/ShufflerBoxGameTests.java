@@ -40,6 +40,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.living.LivingSwapItemsEvent;
 import net.neoforged.neoforge.event.entity.player.UseItemOnBlockEvent;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
@@ -386,6 +387,188 @@ public class ShufflerBoxGameTests {
             helper.assertTrue(player.getMainHandItem().isEmpty(),
                     "an empty box cannot top a hand up, but the hand came back holding "
                             + player.getMainHandItem().getHoverName().getString());
+            helper.succeed();
+        });
+    }
+
+    /**
+     * The other end of a building session. You stop with one block in your hand that the box drew
+     * and you never placed, and the only way back into the box used to be placing it, opening it
+     * and dropping the block in. Swapping hands does it now: the block goes home and the box comes
+     * out into the hand that was holding it.
+     */
+    @GameTest(template = "platform")
+    public static void swappingHandsGivesTheDrawnBlockBack(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 64));
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        // An empty-handed click starts the loop: one andesite into the world, one into the hand.
+        NeoForge.EVENT_BUS.post(clickTopOf(helper, player, FLOOR, InteractionHand.OFF_HAND));
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().is(Items.ANDESITE),
+                    "the box should have armed the hand before there is anything to give back");
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 62,
+                    "two blocks left the box, one placed and one handed over, so it should hold 62, not "
+                            + countIn(box, Items.ANDESITE));
+
+            pressSwapKey(player);
+
+            helper.assertTrue(player.getMainHandItem().is(SBItems.SHUFFLER_BOX.get()),
+                    "the swap should have brought the box out, but the hand holds "
+                            + player.getMainHandItem().getHoverName().getString());
+            helper.assertTrue(player.getOffhandItem().isEmpty(),
+                    "the block went into the box, so nothing should have ridden to the off hand: found "
+                            + player.getOffhandItem().getHoverName().getString());
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 63,
+                    "the block the box handed over should be back in it, leaving 63, not "
+                            + countIn(box, Items.ANDESITE));
+            helper.assertTrue(slotsOf(Palette.of(box), Items.ANDESITE) == 1,
+                    "putting a block back must never open a second slot for it: andesite now has "
+                            + slotsOf(Palette.of(box), Items.ANDESITE));
+            helper.succeed();
+        });
+    }
+
+    /**
+     * And the rule that keeps that from being a nuisance: only the stack the box handed over. A box
+     * of cobblestone has no claim on the cobblestone you mined yourself, even though it is exactly
+     * the kind it stocks -- the same reason it does not place your sand for you.
+     */
+    @GameTest(template = "platform")
+    public static void aBlockYouPickedUpYourselfIsNotTakenBack(GameTestHelper helper) {
+        ItemStack box = boxOf(new ItemStack(Items.COBBLESTONE, 64));
+        ItemStack own = new ItemStack(Items.COBBLESTONE, 5);
+
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, own);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        pressSwapKey(player);
+
+        helper.assertTrue(player.getMainHandItem().is(SBItems.SHUFFLER_BOX.get()),
+                "the swap itself should still happen, but the main hand holds "
+                        + player.getMainHandItem().getHoverName().getString());
+        helper.assertTrue(player.getOffhandItem() == own,
+                "cobblestone the player brought themselves should have swapped across untouched");
+        helper.assertTrue(own.getCount() == 5,
+                "and all five of it, not " + own.getCount());
+        helper.assertTrue(countIn(box, Items.COBBLESTONE) == 64,
+                "the box should not have taken any of it, but holds " + countIn(box, Items.COBBLESTONE));
+        helper.succeed();
+    }
+
+    /**
+     * The block the box handed over can be the last one of its kind it had, which leaves no slot
+     * of that block to put it back into. It opens the slot the draw emptied rather than refusing:
+     * this is the palette the player laid out coming back, not a new block joining it.
+     */
+    @GameTest(template = "platform")
+    public static void theLastBlockOfItsKindGoesBackToAnEmptySlot(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 2));
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        NeoForge.EVENT_BUS.post(clickTopOf(helper, player, FLOOR, InteractionHand.OFF_HAND));
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 0,
+                    "both andesite should have left the box, one placed and one handed over, but it holds "
+                            + countIn(box, Items.ANDESITE));
+
+            pressSwapKey(player);
+
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 1,
+                    "the last andesite should have gone back into an empty slot, but the box holds "
+                            + countIn(box, Items.ANDESITE));
+            helper.assertTrue(slotsOf(Palette.of(box), Items.ANDESITE) == 1,
+                    "and into exactly one slot, not " + slotsOf(Palette.of(box), Items.ANDESITE));
+            helper.assertTrue(player.getOffhandItem().isEmpty(),
+                    "nothing should have been left over to ride to the off hand");
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Pickups land in the slot you are holding first ({@code Inventory#getSlotWithRemainingSpace}),
+     * so the block the box handed over is rarely still alone by the time you stop building. All of
+     * it goes back -- but only into slots the box already keeps that block in. A second slot would
+     * double that block's odds, so the overflow rides to the off hand where an ordinary swap would
+     * have put the lot.
+     */
+    @GameTest(template = "platform")
+    public static void whatWillNotFitRidesToTheOffHand(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 64));
+        Player player = helper.makeMockPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        NeoForge.EVENT_BUS.post(clickTopOf(helper, player, FLOOR, InteractionHand.OFF_HAND));
+
+        helper.runAfterDelay(2, () -> {
+            // 62 left in the box, one in the hand -- and then 33 more mined into the hand.
+            player.getMainHandItem().grow(33);
+
+            pressSwapKey(player);
+
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 64,
+                    "the box's one andesite slot had room for two, so it should be full at 64, not "
+                            + countIn(box, Items.ANDESITE));
+            helper.assertTrue(slotsOf(Palette.of(box), Items.ANDESITE) == 1,
+                    "the overflow must not open a second andesite slot and double its odds: andesite has "
+                            + slotsOf(Palette.of(box), Items.ANDESITE) + " slots");
+            helper.assertTrue(player.getOffhandItem().is(Items.ANDESITE)
+                            && player.getOffhandItem().getCount() == 32,
+                    "the other 32 should have swapped across to the off hand, which holds "
+                            + player.getOffhandItem().getCount() + " "
+                            + player.getOffhandItem().getHoverName().getString());
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Creative was never charged for the block it was handed, so handing it back credits nothing.
+     * Otherwise the swap key would be a printer: click, swap, and the box has one more than it
+     * started with.
+     */
+    @GameTest(template = "platform")
+    public static void creativeGivesTheBlockUpWithoutCreditingTheBox(GameTestHelper helper) {
+        helper.setBlock(FLOOR, Blocks.STONE);
+
+        ItemStack box = boxOf(new ItemStack(Items.ANDESITE, 32));
+        Player player = helper.makeMockPlayer(GameType.CREATIVE);
+        player.getAbilities().instabuild = true;
+        player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        player.setItemInHand(InteractionHand.OFF_HAND, box);
+
+        NeoForge.EVENT_BUS.post(clickTopOf(helper, player, FLOOR, InteractionHand.OFF_HAND));
+
+        helper.runAfterDelay(2, () -> {
+            helper.assertTrue(player.getMainHandItem().is(Items.ANDESITE),
+                    "the box should have armed the hand in creative too");
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 32,
+                    "creative pays for nothing, so the box should still hold 32, not "
+                            + countIn(box, Items.ANDESITE));
+
+            pressSwapKey(player);
+
+            helper.assertTrue(countIn(box, Items.ANDESITE) == 32,
+                    "and it should not be paid back either, but the box now holds "
+                            + countIn(box, Items.ANDESITE));
+            helper.assertTrue(player.getOffhandItem().isEmpty(),
+                    "the block should simply be gone, not left in the off hand: found "
+                            + player.getOffhandItem().getHoverName().getString());
+            helper.assertTrue(player.getMainHandItem().is(SBItems.SHUFFLER_BOX.get()),
+                    "and the box should have come out into the main hand");
             helper.succeed();
         });
     }
@@ -815,6 +998,24 @@ public class ShufflerBoxGameTests {
         ItemStack box = new ItemStack(SBItems.SHUFFLER_BOX.get());
         box.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(slots));
         return box;
+    }
+
+    /**
+     * The swap-hands key, as the server performs it: post the event, then move whatever it says
+     * into each hand. {@code ServerGamePacketListenerImpl#handlePlayerAction} does exactly this,
+     * off hand first, and doing it by hand here is what lets a test see the hands the box asked
+     * for rather than the ones the swap started with.
+     */
+    private static void pressSwapKey(Player player) {
+        LivingSwapItemsEvent.Hands event = new LivingSwapItemsEvent.Hands(player);
+        NeoForge.EVENT_BUS.post(event);
+
+        if (event.isCanceled()) {
+            return;
+        }
+
+        player.setItemInHand(InteractionHand.OFF_HAND, event.getItemSwappedToOffHand());
+        player.setItemInHand(InteractionHand.MAIN_HAND, event.getItemSwappedToMainHand());
     }
 
     /** The event the game fires when a player right-clicks the top of a block with {@code hand}. */

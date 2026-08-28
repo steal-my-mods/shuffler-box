@@ -8,6 +8,17 @@ Notable changes to Shuffler Box, newest first. The format follows
 CurseForge and GitHub, so write entries for a player reading a download page, not for someone
 reading the diff.
 
+## [Unreleased]
+
+### Added
+
+- **Swap hands to give the last block back.** A building session always ended with one block in
+  your hand that the box drew and you never placed, and the only way to return it was to put the
+  box down, open it and drop the block in. Now swapping hands does it: the block goes back into the
+  box and the box comes out into your main hand, ready to be put away. Only ever the block the box
+  handed you -- cobblestone you mined yourself swaps across untouched, even when the box stocks
+  cobblestone -- and anything that will not fit rides to your off hand as it always would.
+
 ## [0.1.0] - 2026-08-21
 
 First release.

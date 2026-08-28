@@ -127,6 +127,35 @@ Releases go out through `publishMods` (`me.modmuss50.mod-publish-plugin`), drive
   place a box is still to hold it in the main hand (`aBoxInTheMainHandStillPlacesItself`) -- now
   simply because nothing intervenes.
 
+- **The box takes its block back on the swap key, and only the stack it handed over.** Building
+  always ends with one drawn block left in the hand, and returning it used to mean placing the box,
+  opening it and dropping the block in. So it hangs off `LivingSwapItemsEvent.Hands` -- NeoForge
+  events the swap-hands key before `handlePlayerAction` moves anything, and lets a listener set what
+  lands in each hand -- which means the whole feature is one server-side listener: **no keybind, no
+  packet, and no `client/` package**, which is what a dedicated keybind would have cost. The gesture
+  is also the one that ends a session anyway, so there is nothing to discover beyond the tooltip
+  line.
+
+  **The rule is identity, not recognition** (`HANDED_OUT`, the marker creative already reads to know
+  its block was spent): the box takes back the *stack it handed you*, never "a block the box
+  stocks". The wider rule would have a box of cobblestone swallow the cobblestone you mined
+  yourself the moment you swapped hands, which is the same unasked-for helpfulness as filling a
+  hotbar. `aBlockYouPickedUpYourselfIsNotTakenBack` is that guard, and it fails if the check is
+  widened to kind-matching rather than passing by construction. The marker does not survive a
+  logout; that leaves logging in and swapping without placing anything first as an ordinary swap,
+  which is worth less than the state it would take to close, because one more placement arms it
+  again.
+
+  Whatever has grown into that stack since goes back with it -- pickups land in the slot you are
+  holding first (`Inventory#getSlotWithRemainingSpace`), so a drawn block is rarely still alone --
+  but `Palette#putBack` will **never open a second slot for a block the palette already has one
+  of**, because slots are the weighting and that would silently double its odds. The overflow rides
+  to the off hand instead, exactly where an ordinary swap would have put the lot. A block the box no
+  longer holds *at all* is the other case and does start a fresh slot: that is the last one it
+  handed over coming home to the slot the draw emptied. **Creative gives the block up without
+  crediting the box**, mirroring never having been charged for it -- otherwise the swap key is a
+  printer.
+
 - **The top-up is hung off `BlockEvent.EntityPlaceEvent` and runs at the tail of the tick.** The
   event is the trigger because it means *a block was placed*, whichever route placed it -- the
   player's own hand, the box's own turn, a copycat's placement helper -- and the check waits for the

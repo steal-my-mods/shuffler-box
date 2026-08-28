@@ -132,6 +132,56 @@ public final class Palette {
     }
 
     /**
+     * Puts a stack back into the palette, and hands back whatever would not fit.
+     *
+     * <p>It goes into the slots the box already keeps that block in, emptiest first -- the mirror
+     * of {@link #consume} taking from the fullest, so a block coming home levels the slots back up
+     * the way the draws wore them down.
+     *
+     * <p>What this will not do is open a <i>second</i> slot for a block the palette already has one
+     * of. Slots are the weighting, so an overflowing stack of cobblestone finding itself an empty
+     * slot would quietly double cobblestone's odds -- the whole thing the box exists to hold
+     * steady. The overflow is handed back instead. A block the box no longer holds at all is the
+     * other case and does start a fresh slot: that is the last one it handed over coming back, and
+     * the slot it lands in is the one the draw emptied.
+     *
+     * @return what is left of {@code stack}, empty if all of it went in
+     */
+    public ItemStack putBack(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+
+        ItemStack remaining = stack.copy();
+
+        for (int slot = emptiestSlotWithRoomFor(remaining); slot >= 0; slot = emptiestSlotWithRoomFor(remaining)) {
+            ItemStack held = this.slots.get(slot);
+            int moved = Math.min(held.getMaxStackSize() - held.getCount(), remaining.getCount());
+            held.grow(moved);
+            remaining.shrink(moved);
+
+            if (remaining.isEmpty()) {
+                return ItemStack.EMPTY;
+            }
+        }
+
+        // Every slot of this block is full. A fresh slot here would be a second slot for a block
+        // already in the palette, so the rest goes back to the player rather than on to the odds.
+        if (holds(remaining)) {
+            return remaining;
+        }
+
+        int empty = firstEmptySlot();
+        if (empty < 0) {
+            return remaining;
+        }
+
+        // A hand never holds more than one stack's worth, so one empty slot always takes all of it.
+        this.slots.set(empty, remaining);
+        return ItemStack.EMPTY;
+    }
+
+    /**
      * How the palette is currently weighted: one entry per distinct block, in the order the
      * blocks first appear in the box. Used for the tooltip -- the whole point of the box is the
      * ratio, so the ratio is what it shows.
@@ -172,6 +222,45 @@ public final class Palette {
         }
 
         return stranded;
+    }
+
+    /** The slot holding this block with the most room left in it, or -1 if none has any. */
+    private int emptiestSlotWithRoomFor(ItemStack stack) {
+        int emptiest = -1;
+
+        for (int slot = 0; slot < this.slots.size(); slot++) {
+            ItemStack held = this.slots.get(slot);
+            if (!ItemStack.isSameItemSameComponents(held, stack) || held.getCount() >= held.getMaxStackSize()) {
+                continue;
+            }
+
+            if (emptiest < 0 || held.getCount() < this.slots.get(emptiest).getCount()) {
+                emptiest = slot;
+            }
+        }
+
+        return emptiest;
+    }
+
+    /** Whether the palette keeps this block in any slot, full or not. */
+    private boolean holds(ItemStack stack) {
+        for (ItemStack held : this.slots) {
+            if (ItemStack.isSameItemSameComponents(held, stack)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private int firstEmptySlot() {
+        for (int slot = 0; slot < this.slots.size(); slot++) {
+            if (this.slots.get(slot).isEmpty()) {
+                return slot;
+            }
+        }
+
+        return -1;
     }
 
     private static boolean isPlaceable(ItemStack stack) {
